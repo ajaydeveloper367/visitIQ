@@ -1,0 +1,12 @@
+[
+  "Patient ID: 1. Name: Rajesh Kumar. Age: 58. Condition: Type 2 Diabetes. Vitals: Glucose 325; BP 168/100; HR 105. History: Hypertension; Diabetic neuropathy. Notes: Foot ulcer developing on right foot.",
+  "Patient ID: 2. Name: Asha Patel. Age: 45. Condition: Type 2 Diabetes. Vitals: Glucose 220; BP 140/90; HR 85. History: Family history of kidney disease. Notes: Overweight, needs diet plan.",
+  "Patient ID: 3. Name: Meera Sharma. Age: 36. Condition: Gestational Diabetes. Vitals: Glucose 115; BP 122/78; HR 78. History: First pregnancy. Notes: Controlled with diet and metformin.",
+  "Patient ID: 4. Name: Imran Sheikh. Age: 62. Condition: Type 2 Diabetes. Vitals: Glucose 410; BP 180/110; HR 115. History: CKD stage 3; previous stroke. Notes: Reports dizziness and reduced urine output.",
+  "Patient ID: 5. Name: Suresh Rao. Age: 70. Condition: Type 2 Diabetes. Vitals: Glucose 190; BP 150/95; HR 95. History: Ischemic heart disease. Notes: Mild shortness of breath on exertion.",
+  "Patient ID: 6. Name: Neha Gupta. Age: 50. Condition: Type 2 Diabetes. Vitals: Glucose 275; BP 155/98; HR 102. History: Obesity; smoker. Notes: Poor medication adherence last month.",
+  "Patient ID: 7. Name: Anil Verma. Age: 30. Condition: Type 1 Diabetes. Vitals: Glucose 85; BP 118/76; HR 72. History: No major comorbidities. Notes: Good control on insulin pump.",
+  "Patient ID: 8. Name: Kavita Singh. Age: 55. Condition: Type 2 Diabetes. Vitals: Glucose 360; BP 170/105; HR 110. History: History of stroke. Notes: Confusion reported last 24 hours.",
+  "Patient ID: 9. Name: Raul Fernandes. Age: 48. Condition: Prediabetes. Vitals: Glucose 140; BP 130/82; HR 80. History: Family history diabetes. Notes: Borderline sugars, lifestyle counselling.",
+  "Patient ID: 10. Name: Pooja Mehta. Age: 66. Condition: Type 2 Diabetes. Vitals: Glucose 305; BP 160/102; HR 108. History: Peripheral vascular disease. Notes: Non-healing ulcer left foot."
+]

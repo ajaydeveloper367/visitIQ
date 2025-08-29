@@ -1,0 +1,11 @@
+patient_id,name,age,condition,glucose_mg_dL,bp_systolic,bp_diastolic,heart_rate,bmi,notes,history
+1,Rajesh Kumar,58,Type 2 Diabetes,325,168,100,105,28,"Foot ulcer developing on right foot","Hypertension; Diabetic neuropathy"
+2,Asha Patel,45,Type 2 Diabetes,220,140,90,85,31,"Overweight, needs diet plan","Family history of kidney disease"
+3,Meera Sharma,36,Gestational Diabetes,115,122,78,78,24,"Controlled with diet and metformin","First pregnancy"
+4,Imran Sheikh,62,Type 2 Diabetes,410,180,110,115,26,"Reports dizziness and reduced urine output","CKD stage 3; previous stroke"
+5,Suresh Rao,70,Type 2 Diabetes,190,150,95,95,29,"Mild shortness of breath on exertion","Ischemic heart disease"
+6,Neha Gupta,50,Type 2 Diabetes,275,155,98,102,33,"Poor medication adherence last month","Obesity; smoker"
+7,Anil Verma,30,Type 1 Diabetes,85,118,76,72,23,"Good control on insulin pump","No major comorbidities"
+8,Kavita Singh,55,Type 2 Diabetes,360,170,105,110,30,"Confusion reported last 24 hours","History of stroke"
+9,Raul Fernandes,48,Prediabetes,140,130,82,80,27,"Borderline sugars, lifestyle counselling","Family history diabetes"
+10,Pooja Mehta,66,Type 2 Diabetes,305,160,102,108,32,"Non-healing ulcer left foot","Peripheral vascular disease"

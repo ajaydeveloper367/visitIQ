@@ -1,0 +1,51 @@
+version: '3.8'
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.enhanced
+    volumes:
+      - ./:/app
+      - enhanced_data:/app/data
+    ports:
+      - "8501:8501"
+    environment:
+      - CHROMA_DIR=/app/chroma_db
+      - OLLAMA_URL=http://ollama:11434
+      - PYTHONPATH=/app
+    depends_on:
+      - ollama
+    command: streamlit run enhanced_app.py --server.port=8501 --server.address=0.0.0.0
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama_enhanced
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+  # Optional: Background scheduler service
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.enhanced
+    volumes:
+      - ./:/app
+      - enhanced_data:/app/data
+    environment:
+      - CHROMA_DIR=/app/chroma_db
+      - PYTHONPATH=/app
+    depends_on:
+      - ollama
+    command: python -c "print('Scheduler service ready - implement background tasks here')"
+    # For now, just a placeholder. Could be used for:
+    # - Automatic slot generation
+    # - Appointment reminders
+    # - Patient priority updates
+
+volumes:
+  enhanced_data:
+  ollama_data:
+

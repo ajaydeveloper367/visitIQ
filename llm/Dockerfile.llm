@@ -1,0 +1,18 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+COPY . /app
+COPY ../requirements.txt /app/requirements.txt
+
+RUN apt-get update && apt-get install -y build-essential git && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir -U pip
+RUN pip install --no-cache-dir -r requirements.txt
+# FastAPI + uvicorn will be used
+RUN pip install --no-cache-dir fastapi uvicorn transformers sentence-transformers
+
+ENV PYTHONUNBUFFERED=1
+
+EXPOSE 8080
+
+CMD ["uvicorn", "llm_server:app", "--host", "0.0.0.0", "--port", "8080"]

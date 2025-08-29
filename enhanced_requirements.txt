@@ -1,0 +1,65 @@
+# Enhanced Visit Prioritization System Requirements
+# Optimized for macOS Apple Silicon (M1/M2/M3/M4)
+
+# Core Web Framework
+streamlit>=1.33.0,<2.0.0
+fastapi>=0.110.0,<1.0.0
+uvicorn>=0.22.0,<1.0.0
+requests>=2.31.0,<3.0.0
+
+# Data Processing & Analytics (Apple Silicon optimized)
+pandas>=2.1.0,<3.0.0
+numpy>=1.24.0,<2.0.0  # Stable version for Apple Silicon
+scikit-learn>=1.3.0,<2.0.0
+
+# Optimization & Scheduling
+ortools>=9.8.0,<10.0.0
+
+# Machine Learning & AI (Apple Silicon compatible)
+torch>=2.1.0,<3.0.0
+torchvision>=0.16.0,<1.0.0
+torchaudio>=2.1.0,<3.0.0
+transformers>=4.35.0,<5.0.0
+sentence-transformers>=2.2.2,<3.0.0
+
+# LLM Integration  
+langchain>=0.1.0,<0.3.0
+langchain-community>=0.0.20,<1.0.0
+langchain-ollama>=0.1.0,<1.0.0
+
+# FHIR & Healthcare Standards (simplified for compatibility)
+pydantic>=2.5.0,<3.0.0  # Core dependency for FHIR models
+
+# Database & Storage
+chromadb>=0.4.0,<1.0.0
+
+# Enhanced vector operations
+faiss-cpu>=1.7.4,<2.0.0  # Alternative to Chroma for some operations
+openai>=1.0.0,<2.0.0  # For potential OpenAI integration
+
+# Additional utilities for enhanced features
+python-dateutil>=2.8.0,<3.0.0
+regex>=2023.0.0
+click>=8.0.0,<9.0.0
+rich>=13.0.0,<14.0.0  # Better terminal output
+plotly>=5.17.0,<6.0.0  # For enhanced visualizations
+
+# Apple Silicon specific optimizations
+accelerate>=0.25.0,<1.0.0  # Optimized training/inference
+
+# Development & Testing (optional)
+pytest>=7.0.0,<8.0.0
+black>=23.0.0,<24.0.0
+flake8>=6.0.0,<7.0.0
+isort>=5.12.0,<6.0.0
+
+# Additional Streamlit components
+streamlit-chat>=0.1.0,<1.0.0
+streamlit-option-menu>=0.3.0,<1.0.0
+
+# For better JSON handling
+ujson>=5.7.0,<6.0.0
+
+# Progress bars and utilities
+tqdm>=4.65.0,<5.0.0
+psutil>=5.9.0,<6.0.0  # System monitoring
