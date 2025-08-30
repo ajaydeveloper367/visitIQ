@@ -16,25 +16,386 @@ from src.fhir_models import AppointmentStatus
 
 # Page configuration
 st.set_page_config(
-    page_title='Healthcare Visit Prioritization & Scheduling',
+    page_title='VisitIQ - Agilon Health',
     page_icon='🏥',
     layout='wide',
     initial_sidebar_state='expanded'
 )
 
-# Initialize components
+
+
+# Disable Streamlit's default error handling options
+# Hide Streamlit style elements including error suggestions
+hide_streamlit_style = """
+<style>
+/* Import Google Fonts for better typography */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Poppins:wght@300;400;500;600;700&display=swap');
+
+/* Hide ALL Streamlit menu elements */
+.stAppHeader {
+    display: none !important;
+}
+#MainMenu {
+    visibility: hidden !important;
+}
+[data-testid="stToolbar"] {
+    display: none !important;
+}
+[data-testid="stDecoration"] {
+    display: none !important;
+}
+.stActionButton {
+    display: none !important;
+}
+button[kind="header"] {
+    display: none !important;
+}
+button[title*="Deploy"] {
+    display: none !important;
+}
+button[title*="Settings"] {
+    display: none !important;
+}
+.stException > div[data-testid="stException"] > div > div:last-child {
+    display: none !important;
+}
+.stException a[href*="google"], .stException a[href*="chatgpt"] {
+    display: none !important;
+}
+footer {
+    display: none !important;
+}
+.stAppFooter {
+    display: none !important;
+}
+
+/* Modern, Human-Centered Design System */
+:root {
+    --primary-blue: #2563eb;
+    --primary-light: #3b82f6;
+    --secondary-teal: #14b8a6;
+    --accent-purple: #8b5cf6;
+    --warm-gray: #6b7280;
+    --light-gray: #f8fafc;
+    --success-green: #10b981;
+    --warning-orange: #f59e0b;
+    --error-red: #ef4444;
+    --white: #ffffff;
+    --shadow-soft: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    --shadow-medium: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    --border-radius: 12px;
+    --border-radius-lg: 16px;
+}
+
+/* Global styling improvements */
+.main {
+    background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+    padding: 1rem;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+/* Beautiful company header with human touch */
+.company-header {
+    background: linear-gradient(135deg, #2563eb 0%, #3b82f6 50%, #14b8a6 100%);
+    color: white;
+    padding: 2rem;
+    border-radius: var(--border-radius-lg);
+    margin-bottom: 2rem;
+    text-align: center;
+    box-shadow: var(--shadow-medium);
+    position: relative;
+    overflow: hidden;
+}
+
+.company-header::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.05'%3E%3Ccircle cx='30' cy='30' r='2'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E") repeat;
+    pointer-events: none;
+}
+
+.company-header h2, .company-header h4, .company-header p {
+    position: relative;
+    z-index: 1;
+}
+
+/* Simple sidebar styling - back to working state */
+.css-1d391kg {
+    background: var(--white);
+    border-right: 1px solid #e2e8f0;
+    box-shadow: var(--shadow-soft);
+}
+
+.css-1d391kg .stRadio > div {
+    background: var(--white);
+    border-radius: var(--border-radius);
+    padding: 1rem;
+    margin-bottom: 0.5rem;
+    border: 1px solid #e2e8f0;
+    transition: all 0.2s ease;
+}
+
+.css-1d391kg .stRadio > div:hover {
+    border-color: var(--primary-light);
+    box-shadow: var(--shadow-soft);
+    transform: translateY(-1px);
+}
+
+
+
+/* Beautiful cards for content sections */
+.metric-card {
+    background: var(--white);
+    border-radius: var(--border-radius);
+    padding: 1.5rem;
+    margin: 1rem 0;
+    box-shadow: var(--shadow-soft);
+    border-left: 4px solid var(--primary-blue);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.metric-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-medium);
+}
+
+/* Enhanced buttons */
+.stButton > button {
+    background: linear-gradient(135deg, var(--primary-blue), var(--primary-light));
+    color: white;
+    border: none;
+    border-radius: var(--border-radius);
+    padding: 0.75rem 1.5rem;
+    font-weight: 500;
+    font-family: 'Inter', sans-serif;
+    transition: all 0.2s ease;
+    box-shadow: var(--shadow-soft);
+}
+
+.stButton > button:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-medium);
+    background: linear-gradient(135deg, var(--primary-light), var(--secondary-teal));
+}
+
+/* Modern success/info/warning messages */
+.stAlert {
+    border-radius: var(--border-radius);
+    border: none;
+    box-shadow: var(--shadow-soft);
+    font-family: 'Inter', sans-serif;
+}
+
+.stSuccess {
+    background: linear-gradient(135deg, #ecfdf5, #d1fae5);
+    border-left: 4px solid var(--success-green);
+    color: #065f46;
+}
+
+.stInfo {
+    background: linear-gradient(135deg, #eff6ff, #dbeafe);
+    border-left: 4px solid var(--primary-blue);
+    color: #1e3a8a;
+}
+
+.stWarning {
+    background: linear-gradient(135deg, #fffbeb, #fef3c7);
+    border-left: 4px solid var(--warning-orange);
+    color: #92400e;
+}
+
+/* Enhanced data tables */
+.stDataFrame {
+    border-radius: var(--border-radius);
+    overflow: hidden;
+    box-shadow: var(--shadow-soft);
+    margin: 1rem 0;
+}
+
+.stDataFrame > div {
+    border-radius: var(--border-radius);
+}
+
+/* Modern metrics display */
+[data-testid="metric-container"] {
+    background: var(--white);
+    border-radius: var(--border-radius);
+    padding: 1.5rem;
+    box-shadow: var(--shadow-soft);
+    border: 1px solid #e2e8f0;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+[data-testid="metric-container"]:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-medium);
+    border-color: var(--primary-light);
+}
+
+[data-testid="metric-container"] [data-testid="metric-value"] {
+    font-family: 'Poppins', sans-serif;
+    font-weight: 600;
+    color: var(--primary-blue);
+}
+
+/* Input fields styling */
+.stTextInput > div > div > input {
+    border-radius: var(--border-radius);
+    border: 2px solid #e2e8f0;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    font-family: 'Inter', sans-serif;
+}
+
+.stTextInput > div > div > input:focus {
+    border-color: var(--primary-light);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.stSelectbox > div > div > div {
+    border-radius: var(--border-radius);
+    border: 2px solid #e2e8f0;
+    transition: border-color 0.2s ease;
+}
+
+/* Enhanced chat interface */
+.chat-message {
+    background: var(--white);
+    border-radius: var(--border-radius);
+    padding: 1rem;
+    margin: 0.5rem 0;
+    box-shadow: var(--shadow-soft);
+    border-left: 4px solid var(--secondary-teal);
+}
+
+/* Loading animations */
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.loading {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Status indicators */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    font-family: 'Inter', sans-serif;
+}
+
+.status-success {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.status-warning {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.status-error {
+    background: #fecaca;
+    color: #991b1b;
+}
+
+/* Modern section headers */
+h1, h2, h3 {
+    font-family: 'Poppins', sans-serif;
+    font-weight: 600;
+    color: #1f2937;
+    margin-bottom: 1rem;
+}
+
+/* Soft dividers */
+hr {
+    border: none;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #e2e8f0, transparent);
+    margin: 2rem 0;
+}
+
+/* Enhanced tooltips and help text */
+.stTooltipIcon {
+    color: var(--primary-blue);
+}
+
+/* Professional yet warm footer */
+.footer-branding {
+    background: var(--white);
+    border-radius: var(--border-radius);
+    padding: 1.5rem;
+    margin-top: 2rem;
+    box-shadow: var(--shadow-soft);
+    border-top: 3px solid var(--secondary-teal);
+}
+
+/* Responsive design improvements */
+@media (max-width: 768px) {
+    .company-header {
+        padding: 1.5rem;
+    }
+    
+    .main {
+        padding: 0.5rem;
+    }
+}
+
+/* Accessibility improvements */
+button:focus, input:focus, select:focus {
+    outline: 2px solid var(--primary-blue);
+    outline-offset: 2px;
+}
+</style>
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+
+# Initialize components with lazy loading for better startup performance
 @st.cache_resource
-def get_components():
-    slot_manager = get_slot_manager()
-    prioritizer = SmartPrioritizer(slot_manager)
-    chatbot = create_chatbot()
-    return slot_manager, prioritizer, chatbot
+def get_slot_manager_cached():
+    """Get slot manager - lightweight initialization"""
+    return get_slot_manager()
 
-slot_manager, prioritizer, chatbot = get_components()
+@st.cache_resource  
+def get_prioritizer_cached():
+    """Get prioritizer - initialized when needed"""
+    slot_manager = get_slot_manager_cached()
+    return SmartPrioritizer(slot_manager)
 
-# App header
-st.title('🏥 Healthcare Visit Prioritization & Scheduling System')
-st.markdown('**Enhanced with FHIR Slots, Smart Prioritization & AI Chatbot**')
+@st.cache_resource
+def get_chatbot_cached():
+    """Get chatbot - initialized when needed"""
+    return create_chatbot()
+
+# Initialize only the lightweight slot manager at startup
+slot_manager = get_slot_manager_cached()
+
+
+
+# Custom company header
+st.markdown(
+    """
+    <div class="company-header">
+        <h2 style="margin: 0; color: white;">🏥 VisitIQ</h2>
+        <h4 style="margin: 0; color: #e0e7ff; font-weight: normal;">Agilon Health - Healthcare Visit Prioritization System</h4>
+        <p style="margin: 0; color: #c7d2fe; font-size: 0.9em;">Team GridMind | AI-Enhanced FHIR-Compliant Scheduling</p>
+    </div>
+    """, 
+    unsafe_allow_html=True
+)
+
+# Show loading message
+if 'app_initialized' not in st.session_state:
+    st.success("🚀 VisitIQ loaded successfully! AI components initialize when first used.")
+    st.session_state.app_initialized = True
 
 # Sidebar navigation
 st.sidebar.header('Navigation')
@@ -59,28 +420,76 @@ patients_df = load_patients()
 
 # ============ AI CHATBOT ASSISTANT ============
 if view == '🤖 AI Chatbot Assistant':
-    st.header('🤖 AI Assistant')
-    st.markdown('Ask me anything about physicians, available slots, or patient prioritization!')
+    st.markdown(
+        """
+        <div style="background: linear-gradient(135deg, #eff6ff, #dbeafe); 
+                    border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem;
+                    border-left: 4px solid #3b82f6;">
+            <h2 style="color: #1e3a8a; margin: 0 0 0.5rem 0; font-family: 'Poppins', sans-serif;">
+                👋 Hello! I'm your VisitIQ Assistant
+            </h2>
+            <p style="color: #1e40af; margin: 0; font-size: 1rem;">
+                I'm here to help you navigate healthcare scheduling with ease. Ask me anything about 
+                physicians, appointment availability, or patient prioritization - I speak human! 😊
+            </p>
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
     
     # Chat interface
     if 'chat_history' not in st.session_state:
         st.session_state.chat_history = []
     
-    # Display chat history
+    # Display chat history with beautiful styling
     for i, (user_msg, bot_response) in enumerate(st.session_state.chat_history):
-        with st.container():
-            st.write(f"**You:** {user_msg}")
-            st.write(f"**Assistant:** {bot_response}")
-            st.divider()
+        # User message
+        st.markdown(
+            f"""
+            <div style="background: #f8fafc; border-radius: 12px; padding: 1rem; 
+                        margin: 0.5rem 0; border-left: 4px solid #14b8a6;">
+                <strong style="color: #0f766e;">👤 You:</strong> 
+                <span style="color: #374151;">{user_msg}</span>
+            </div>
+            """, 
+            unsafe_allow_html=True
+        )
+        
+        # Assistant response
+        st.markdown(
+            f"""
+            <div style="background: linear-gradient(135deg, #ecfdf5, #d1fae5); 
+                        border-radius: 12px; padding: 1rem; margin: 0.5rem 0 1.5rem 0; 
+                        border-left: 4px solid #10b981;">
+                <strong style="color: #065f46;">🤖 VisitIQ Assistant:</strong> 
+                <span style="color: #374151;">{bot_response}</span>
+            </div>
+            """, 
+            unsafe_allow_html=True
+        )
     
-    # Input for new query
+    # Input for new query with helpful examples
+    st.markdown(
+        """
+        <div style="margin: 1.5rem 0 1rem 0;">
+            <h4 style="color: #374151; margin-bottom: 0.5rem;">💬 What can I help you with today?</h4>
+            <p style="color: #6b7280; font-size: 0.9em; margin-bottom: 1rem;">
+                Try asking natural questions like you would to a colleague...
+            </p>
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
+    
     user_query = st.text_input(
         'Ask a question:',
-        placeholder='e.g., "List all physicians", "Show available slots for Dr. Chen on tomorrow", "Prioritize patients for endocrinology"'
+        placeholder='💭 "Who are our available endocrinologists?" or "Show me Dr. Chen\'s schedule for tomorrow"',
+        label_visibility='collapsed'
     )
     
     if user_query:
         with st.spinner('Processing your query...'):
+            chatbot = get_chatbot_cached()
             response = chatbot.process_query(user_query)
             
             if response['status'] == 'success':
@@ -92,16 +501,35 @@ if view == '🤖 AI Chatbot Assistant':
                     
                     # Display data based on query type
                     if isinstance(response['data'], list) and len(response['data']) > 0:
-                        if 'name' in response['data'][0] and 'specialty' in response['data'][0]:
-                            # Physician data
-                            st.dataframe(pd.DataFrame(response['data']))
-                        elif 'start_time' in response['data'][0]:
-                            # Slot data
-                            st.dataframe(pd.DataFrame(response['data']))
+                        if 'Name' in response['data'][0] and 'Specialty' in response['data'][0]:
+                            # Physician data with column configuration
+                            df = pd.DataFrame(response['data'])
+                            st.dataframe(
+                                df, 
+                                use_container_width=True,
+                                column_config={
+                                    "ID": st.column_config.TextColumn("ID", width="small"),
+                                    "Name": st.column_config.TextColumn("Name", width="medium"),
+                                    "Specialty": st.column_config.TextColumn("Specialty", width="medium"), 
+                                    "Dept": st.column_config.TextColumn("Department", width="medium"),
+                                    "Contact": st.column_config.TextColumn("Contact", width="medium")
+                                }
+                            )
+                        elif 'Time' in response['data'][0]:
+                            # Slot data - dynamic height based on data size
+                            df = pd.DataFrame(response['data'])
+                            dynamic_height = min(len(df) * 35 + 50, 400)  # Cap at 400px for chat
+                            st.data_editor(
+                                df, 
+                                use_container_width=True,
+                                height=dynamic_height,
+                                disabled=True,  # Read-only
+                                hide_index=True
+                            )
                         elif 'patient_id' in response['data'][0]:
                             # Patient priority data
                             df = pd.DataFrame(response['data'])
-                            st.dataframe(df.style.background_gradient(subset=['score']))
+                            st.dataframe(df.style.background_gradient(subset=['score']), use_container_width=True)
                     
                     st.code(formatted_response, language='text')
                 else:
@@ -127,28 +555,146 @@ if view == '🤖 AI Chatbot Assistant':
             # Add to chat history
             st.session_state.chat_history.append((user_query, formatted_response if 'formatted_response' in response else response['message']))
     
-    # Quick action buttons
-    st.subheader('Quick Actions')
-    col1, col2, col3 = st.columns(3)
+    # Initialize session state for button tracking
+    if 'processing_prioritization' not in st.session_state:
+        st.session_state.processing_prioritization = False
     
-    with col1:
-        if st.button('📝 List All Physicians'):
-            response = chatbot.process_query('list all physicians')
-            st.dataframe(pd.DataFrame(response['data']))
+    # Initialize session state variables first
+    if 'slots_clicked' not in st.session_state:
+        st.session_state.slots_clicked = False
+    if 'physicians_clicked' not in st.session_state:
+        st.session_state.physicians_clicked = False
     
-    with col2:
-        if st.button('📅 Today\'s Available Slots'):
-            response = chatbot.process_query('available slots today')
-            if response['data']:
-                st.dataframe(pd.DataFrame(response['data']))
-            else:
-                st.info('No slots available today')
+    # Check if any table is currently displayed
+    any_table_active = (st.session_state.get('physicians_clicked', False) or 
+                       st.session_state.get('slots_clicked', False) or 
+                       st.session_state.get('processing_prioritization', False))
     
-    with col3:
-        if st.button('🎯 Smart Patient Prioritization'):
-            response = chatbot.process_query('prioritize patients')
-            if response['data']:
-                st.dataframe(pd.DataFrame(response['data']))
+    # Only show Quick Actions if NO table is displayed
+    if not any_table_active:
+        # Quick action buttons with friendly styling
+        st.markdown(
+            """
+            <div style="margin: 2rem 0 1rem 0;">
+                <h4 style="color: #374151; margin-bottom: 0.5rem;">⚡ Quick Actions</h4>
+                <p style="color: #6b7280; font-size: 0.9em; margin-bottom: 1rem;">
+                    Click these buttons for instant insights:
+                </p>
+            </div>
+            """, 
+            unsafe_allow_html=True
+        )
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button('📝 List All Physicians'):
+                st.session_state.physicians_clicked = True
+                st.rerun()
+        
+        with col2:
+            if st.button('📅 Today\'s Available Slots'):
+                st.session_state.slots_clicked = True
+                st.rerun()
+        
+        with col3:
+            if st.button('🎯 Smart Patient Prioritization'):
+                st.session_state.processing_prioritization = True
+                st.rerun()
+    
+    # Display physicians table OUTSIDE of columns to use full width  
+    if st.session_state.physicians_clicked:
+        st.markdown("---")
+        st.subheader("📝 All Physicians")
+        
+        chatbot = get_chatbot_cached()
+        response = chatbot.process_query('list all physicians')
+        if response.get('data'):
+            df = pd.DataFrame(response['data'])
+            # Dynamic height based on data size (35px per row + 50px header)
+            dynamic_height = min(len(df) * 35 + 50, 400)  # Cap at 400px max
+            st.data_editor(
+                df, 
+                use_container_width=True,
+                height=dynamic_height,
+                disabled=True,
+                hide_index=True
+            )
+            
+            if st.button('🔄 Back to Quick Actions', key='physicians_back'):
+                st.session_state.physicians_clicked = False
+                st.rerun()
+        else:
+            st.info(response.get('message', 'No physician data available'))
+            if st.button('🔄 Back to Quick Actions', key='physicians_back_empty'):
+                st.session_state.physicians_clicked = False
+                st.rerun()
+        
+    # Display slots table OUTSIDE of columns to use full width        
+    if st.session_state.slots_clicked:
+        st.markdown("---")
+        st.subheader("📅 Available Slots Today")
+        
+        chatbot = get_chatbot_cached()
+        response = chatbot.process_query('available slots today')
+        if response.get('data'):
+            df = pd.DataFrame(response['data'])
+            # Dynamic height based on data size (35px per row + 50px header)
+            dynamic_height = min(len(df) * 35 + 50, 500)  # Cap at 500px max for slots
+            st.data_editor(
+                df, 
+                use_container_width=True,
+                height=dynamic_height,
+                disabled=True,
+                hide_index=True
+            )
+            
+            if st.button('🔄 Back to Quick Actions', key='slots_back'):
+                st.session_state.slots_clicked = False
+                st.rerun()
+        else:
+            st.info('No slots available today')
+            if st.button('🔄 Back to Quick Actions', key='slots_back_empty'):
+                st.session_state.slots_clicked = False
+                st.rerun()
+    
+    # Handle prioritization processing
+    if st.session_state.processing_prioritization:
+        with st.spinner('🔄 Running smart patient prioritization...'):
+            try:
+                chatbot = get_chatbot_cached()
+                response = chatbot.process_query('prioritize patients')
+                
+                if response.get('status') == 'success' and response.get('data'):
+                    st.success(f"✅ {response.get('message', 'Prioritization completed')}")
+                    
+                    # Create clean dataframe without redundant index
+                    df = pd.DataFrame(response['data'])
+                    
+                    # Clean up the display - remove redundant/non-functional columns
+                    columns_to_remove = ['rank', 'recommended_for_booking']
+                    for col in columns_to_remove:
+                        if col in df.columns:
+                            df = df.drop(columns=[col])
+                    
+                    # Reset index to start from 1 and rename it
+                    df.index = df.index + 1
+                    df.index.name = 'Priority Rank'
+                    
+                    st.dataframe(df, use_container_width=True)
+                else:
+                    st.warning(f"⚠️ {response.get('message', 'No prioritization data available')}")
+                    if 'suggestions' in response:
+                        st.write("**Suggestions:**")
+                        for suggestion in response['suggestions']:
+                            st.write(f"• {suggestion}")
+            except Exception as e:
+                st.error(f"❌ Error during prioritization: {str(e)}")
+            finally:
+                # Reset the processing state and add a reset button
+                st.session_state.processing_prioritization = False
+                if st.button('🔄 Back to Quick Actions', key='prioritization_back'):
+                    st.session_state.processing_prioritization = False
+                    st.rerun()
 
 # ============ PHYSICIANS & SCHEDULES ============
 elif view == '👩‍⚕️ Physicians & Schedules':
@@ -209,7 +755,7 @@ elif view == '👩‍⚕️ Physicians & Schedules':
                         'Booked': summary.get('booked_appointments', 0)
                     })
                 
-                st.dataframe(pd.DataFrame(weekly_data))
+                st.dataframe(pd.DataFrame(weekly_data), use_container_width=True)
 
 # ============ SLOT MANAGEMENT ============
 elif view == '📅 Slot Management':
@@ -330,6 +876,7 @@ elif view == '🎯 Smart Patient Prioritization':
             
             # Get prioritized patients
             practitioner_id = None if selected_physician == 'Auto-Select Best Match' else selected_physician
+            prioritizer = get_prioritizer_cached()
             
             prioritized_patients = prioritizer.prioritize_patients_for_slots(
                 patients=patients,
@@ -352,7 +899,6 @@ elif view == '🎯 Smart Patient Prioritization':
                         'Condition': patient['condition'],
                         'Priority Level': patient['base_priority_level'],
                         'Final Score': round(patient['final_score'], 1),
-                        'Recommended': '✅ YES' if patient['recommended_for_booking'] else '⏳ Waitlist',
                         'Key Reasons': '; '.join(patient.get('base_reasons', [])[:2])  # Top 2 reasons
                     })
                 
@@ -369,8 +915,18 @@ elif view == '🎯 Smart Patient Prioritization':
                     else:
                         return 'background-color: #e8f5e8; color: #2e7d32;'
                 
-                styled_df = priority_df.style.applymap(highlight_priority, subset=['Priority Level'])
-                styled_df = styled_df.background_gradient(subset=['Final Score'], cmap='RdYlGn')
+                # Clean up the display - remove redundant columns if they exist
+                display_df = priority_df.copy()
+                if 'Rank' in display_df.columns:
+                    display_df = display_df.drop(columns=['Rank'])  # Remove redundant rank column
+                
+                # Reset index to start from 1 for better readability
+                display_df.index = display_df.index + 1
+                display_df.index.name = 'Priority Rank'
+                
+                styled_df = display_df.style.applymap(highlight_priority, subset=['Priority Level'])
+                # Remove background_gradient due to matplotlib dependency
+                # styled_df = styled_df.background_gradient(subset=['Final Score'], cmap='RdYlGn')
                 
                 st.dataframe(styled_df, use_container_width=True)
                 
@@ -498,7 +1054,7 @@ elif view == '📋 Appointment Booking':
                     'Status': apt.status.value.title()
                 })
             
-            st.dataframe(pd.DataFrame(appointments_data))
+            st.dataframe(pd.DataFrame(appointments_data), use_container_width=True)
         else:
             st.info('No appointments scheduled for today.')
         
@@ -571,12 +1127,36 @@ elif view == '📊 Analytics & Reports':
     
     practitioner_df = pd.DataFrame(practitioner_stats)
     if not practitioner_df.empty:
-        st.dataframe(
-            practitioner_df.style.background_gradient(subset=['Utilization %'], cmap='RdYlGn'),
-            use_container_width=True
-        )
+        # Remove background_gradient due to matplotlib dependency
+        st.dataframe(practitioner_df, use_container_width=True)
 
-# Footer
-st.markdown('---')
-st.markdown('**Healthcare Visit Prioritization System** | Enhanced with FHIR Standards, Smart AI Prioritization & Conversational Interface')
+# Push branding further down with more space
+st.markdown("<br><br>", unsafe_allow_html=True)
 
+# Footer branding - positioned lower
+st.markdown(
+    """
+    <div style="margin: 4rem 0 1rem 0;">
+        <hr style="border: none; height: 1px; background: linear-gradient(90deg, transparent, #e2e8f0, transparent); margin: 2rem 0;">
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+st.markdown(
+    """
+    <div class="footer-branding" style="text-align: center; color: #6b7280; font-size: 0.95em; margin: 2rem 0 3rem 0; padding: 1.5rem;">
+        <div style="margin-bottom: 0.75rem;">
+            <span style="font-size: 1.1em; color: #2563eb; font-weight: 600;">🏥 VisitIQ</span> 
+            <span style="margin: 0 0.75rem; color: #14b8a6;">•</span>
+            <span style="color: #1f2937; font-weight: 500;">Agilon Health</span>
+            <span style="margin: 0 0.75rem; color: #14b8a6;">•</span>
+            <span style="color: #6b7280; font-style: italic;">Team GridMind</span>
+        </div>
+        <div style="color: #9ca3af; font-size: 0.85em; margin-top: 0.5rem;">
+            🤖 AI-Enhanced • 🏥 FHIR-Compliant • 📊 Healthcare Scheduling Intelligence
+        </div>
+    </div>
+    """, 
+    unsafe_allow_html=True
+)

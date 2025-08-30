@@ -14,8 +14,21 @@ import numpy as np
 import pandas as pd
 from typing import Dict, Any, List
 
-from sentence_transformers import SentenceTransformer
-from sklearn.neighbors import NearestNeighbors
+# Defer heavy imports to speed up app startup
+def _import_heavy_dependencies():
+    """Import heavy ML dependencies only when needed"""
+    global SentenceTransformer, NearestNeighbors
+    try:
+        from sentence_transformers import SentenceTransformer
+        from sklearn.neighbors import NearestNeighbors
+        return True
+    except ImportError as e:
+        print(f"Warning: Heavy ML dependencies not available: {e}")
+        return False
+
+# Global variables to hold classes after import
+SentenceTransformer = None
+NearestNeighbors = None
 
 # Try to import OllamaLLM (langchain-ollama). If not present, we'll fallback.
 try:
@@ -138,7 +151,10 @@ def build_vectorstore_from_csv(csv_path: str, persist_directory: str = PERSIST_D
         ids.append(pid)
         docs.append(txt)
 
-    # embeddings
+    # embeddings (with lazy import)
+    if not _import_heavy_dependencies():
+        raise RuntimeError("ML dependencies not available for building vectorstore")
+    
     model = SentenceTransformer(EMBEDDING_MODEL)
     emb = model.encode(docs, show_progress_bar=False)
     np.save(os.path.join(persist_directory, "embeddings.npy"), emb)
@@ -170,7 +186,10 @@ def _query_similar_docs(query_text: str, k: int = TOP_K, persist_directory: str 
     if docs is None or emb is None or len(docs) == 0:
         return []
 
-    # embed query
+    # embed query (with lazy import)
+    if not _import_heavy_dependencies():
+        return []  # Fallback to empty if ML dependencies not available
+    
     model = SentenceTransformer(EMBEDDING_MODEL)
     q_emb = model.encode([query_text], show_progress_bar=False)
     # fit a nearest neighbor on the stored embeddings (fast enough locally)

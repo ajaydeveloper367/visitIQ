@@ -385,4 +385,3 @@ def get_practitioner_recommendations(
             all_recommendations.append(rec)
     
     return pd.DataFrame(all_recommendations)
-

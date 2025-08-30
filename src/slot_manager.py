@@ -395,4 +395,3 @@ def get_slot_manager() -> SlotManager:
     if _slot_manager_instance is None:
         _slot_manager_instance = SlotManager()
     return _slot_manager_instance
-

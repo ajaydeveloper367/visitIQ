@@ -35,7 +35,15 @@ class ChatbotEngine:
                 r'list\s+(?:all\s+)?(?:physicians?|doctors?)',
                 r'show\s+(?:me\s+)?(?:physicians?|doctors?)',
                 r'who\s+are\s+the\s+(?:physicians?|doctors?)',
-                r'available\s+(?:physicians?|doctors?)'
+                r'available\s+(?:physicians?|doctors?)',
+                r'what\s+(?:physicians?|doctors?)\s+(?:do\s+)?(?:we\s+)?have',
+                r'tell\s+me\s+(?:about\s+)?(?:the\s+)?(?:physicians?|doctors?)'
+            ],
+            'physician_count': [
+                r'how\s+many\s+(?:physicians?|doctors?)',
+                r'(?:what.s\s+the\s+)?(?:total\s+)?(?:number\s+of\s+|count\s+of\s+)?(?:physicians?|doctors?)',
+                r'count\s+(?:of\s+)?(?:physicians?|doctors?)',
+                r'total\s+(?:physicians?|doctors?)'
             ],
             'physician_specialties': [
                 r'(?:physicians?|doctors?)\s+(?:with\s+)?specialty\s+(\w+)',
@@ -45,16 +53,20 @@ class ChatbotEngine:
             'available_slots': [
                 r'available\s+slots?\s+(?:for\s+)?(.+?)(?:\s+on\s+(.+?))?',
                 r'show\s+(?:me\s+)?slots?\s+(?:for\s+)?(.+?)(?:\s+on\s+(.+?))?',
-                r'when\s+(?:is|are)\s+(.+?)\s+available(?:\s+on\s+(.+?))?'
+                r'when\s+(?:is|are)\s+(.+?)\s+available(?:\s+on\s+(.+?))?',
+                r'what\s+slots?\s+(?:are\s+)?(?:available\s+)?(?:for\s+)?(.+?)(?:\s+on\s+(.+?))?',
+                r'(.+?)\s+(?:schedule|availability)(?:\s+on\s+(.+?))?'
             ],
             'slot_count': [
                 r'how\s+many\s+slots?\s+(?:are\s+)?available\s+(?:for\s+)?(.+?)(?:\s+on\s+(.+?))?',
-                r'count\s+(?:of\s+)?available\s+slots?\s+(?:for\s+)?(.+?)(?:\s+on\s+(.+?))?'
+                r'count\s+(?:of\s+)?available\s+slots?\s+(?:for\s+)?(.+?)(?:\s+on\s+(.+?))?',
+                r'(?:what.s\s+the\s+)?(?:total\s+)?(?:number\s+of\s+)?slots?\s+(?:available\s+)?(?:for\s+)?(.+?)(?:\s+on\s+(.+?))?'
             ],
             'prioritize_patients': [
-                r'prioritize\s+patients?\s+(?:for\s+)?(.+?)(?:\s+on\s+(.+?))?',
+                r'prioritize\s+patients?(?:\s+for\s+(.+?))?(?:\s+on\s+(.+?))?$',
                 r'which\s+patients?\s+should\s+(?:see|visit)\s+(.+?)(?:\s+on\s+(.+?))?',
-                r'schedule\s+patients?\s+(?:for\s+)?(.+?)(?:\s+on\s+(.+?))?'
+                r'schedule\s+patients?\s+(?:for\s+)?(.+?)(?:\s+on\s+(.+?))?',
+                r'patient\s+prioritization(?:\s+for\s+(.+?))?(?:\s+on\s+(.+?))?'
             ],
             'book_appointment': [
                 r'book\s+(?:appointment\s+)?(?:for\s+)?patient\s+(\w+)\s+with\s+(.+?)(?:\s+on\s+(.+?))?',
@@ -113,6 +125,9 @@ class ChatbotEngine:
         if query_type == 'list_physicians':
             return self._list_physicians()
         
+        elif query_type == 'physician_count':
+            return self._count_physicians()
+        
         elif query_type == 'physician_specialties':
             specialty = match.group(1)
             return self._find_physicians_by_specialty(specialty)
@@ -128,8 +143,8 @@ class ChatbotEngine:
             return self._count_available_slots(practitioner_query, date_query)
         
         elif query_type == 'prioritize_patients':
-            practitioner_query = match.group(1)
-            date_query = match.group(2) if len(match.groups()) > 1 else None
+            practitioner_query = match.group(1) if match.group(1) else None
+            date_query = match.group(2) if len(match.groups()) > 1 and match.group(2) else None
             return self._prioritize_patients(practitioner_query, date_query, patients_csv_path)
         
         elif query_type == 'practitioner_info':
@@ -154,12 +169,16 @@ class ChatbotEngine:
         
         practitioner_data = []
         for p in practitioners:
+            # Get contact info and truncate if needed
+            contact_info = p.contact_phone or p.contact_email or 'N/A'
+            contact_display = contact_info[:15] + '...' if len(contact_info) > 15 else contact_info
+            
             practitioner_data.append({
-                'id': p.id,
-                'name': p.name,
-                'specialty': p.specialty,
-                'department': p.department,
-                'contact': p.contact_phone or p.contact_email or 'N/A'
+                'ID': p.id,
+                'Name': p.name,
+                'Specialty': p.specialty,
+                'Dept': p.department[:15] + '...' if len(p.department) > 15 else p.department,
+                'Contact': contact_display
             })
         
         return {
@@ -167,6 +186,40 @@ class ChatbotEngine:
             'message': f'Found {len(practitioners)} physicians:',
             'data': practitioner_data,
             'formatted_response': self._format_physician_list(practitioner_data)
+        }
+    
+    def _count_physicians(self) -> Dict[str, Any]:
+        """Count total number of physicians"""
+        practitioners = self.slot_manager.get_practitioners()
+        count = len(practitioners)
+        
+        if count == 0:
+            return {
+                'status': 'no_data',
+                'message': 'No physicians found in the system.',
+                'count': 0
+            }
+        
+        # Group by specialty for detailed breakdown
+        specialty_breakdown = {}
+        for p in practitioners:
+            specialty = p.specialty
+            specialty_breakdown[specialty] = specialty_breakdown.get(specialty, 0) + 1
+        
+        breakdown_text = []
+        for specialty, spec_count in specialty_breakdown.items():
+            breakdown_text.append(f"• {specialty}: {spec_count}")
+        
+        formatted_response = f"""We have {count} physician{'s' if count != 1 else ''} in total:
+
+{chr(10).join(breakdown_text)}"""
+        
+        return {
+            'status': 'success',
+            'message': f'We have {count} physician{"s" if count != 1 else ""} in total',
+            'count': count,
+            'breakdown': specialty_breakdown,
+            'formatted_response': formatted_response
         }
     
     def _find_physicians_by_specialty(self, specialty: str) -> Dict[str, Any]:
@@ -237,15 +290,22 @@ class ChatbotEngine:
                 'date': date_str
             }
         
-        slot_data = [
-            {
-                'start_time': slot.start.strftime('%H:%M'),
-                'end_time': slot.end.strftime('%H:%M'),
-                'date': slot.start.strftime('%Y-%m-%d'),
-                'duration_minutes': slot.duration_minutes,
-                'service_type': ', '.join(slot.service_type)
-            } for slot in slots
-        ]
+        slot_data = []
+        for slot in slots:
+            # Safely handle service_type
+            service_types = slot.service_type if slot.service_type else ['General']
+            service_text = ', '.join(service_types) if isinstance(service_types, list) else str(service_types)
+            
+            # Ultra-concise service text to prevent any truncation
+            short_service = service_text.replace('diabetes-consultation', 'Diabetes').replace('hormone-therapy', 'Hormone').replace('follow-up', 'Followup').replace('routine-checkup', 'Routine').replace('consultation', 'Consult').replace('-', ' ').replace('  ', ' ').strip()
+            
+            slot_data.append({
+                'Time': f"{slot.start.strftime('%H:%M')}-{slot.end.strftime('%H:%M')}",
+                'Date': slot.start.strftime('%Y-%m-%d'), 
+                'Duration': f"{slot.duration_minutes}min",
+                'Service Type': short_service
+                # Removed 'Status': 'Available' - redundant since all are available
+            })
         
         return {
             'status': 'success',
@@ -279,7 +339,7 @@ class ChatbotEngine:
     
     def _prioritize_patients(
         self, 
-        practitioner_query: str, 
+        practitioner_query: Optional[str], 
         date_query: Optional[str],
         patients_csv_path: str
     ) -> Dict[str, Any]:
@@ -295,8 +355,16 @@ class ChatbotEngine:
                     'message': 'No patients found in the dataset'
                 }
             
-            # Find practitioner
-            practitioner = self._find_practitioner(practitioner_query)
+            # Find practitioner (optional)
+            practitioner = None
+            if practitioner_query:
+                practitioner = self._find_practitioner(practitioner_query)
+                if not practitioner:
+                    return {
+                        'status': 'not_found',
+                        'message': f'Practitioner not found: {practitioner_query}',
+                        'suggestions': [p.name for p in self.slot_manager.get_practitioners()]
+                    }
             target_date = self._parse_date(date_query) if date_query else None
             
             # Get prioritized patients
@@ -429,14 +497,14 @@ Date formats: today, tomorrow, 2024-01-15, next monday
         """Format physician list for display"""
         lines = []
         for p in physicians:
-            lines.append(f"• {p['name']} - {p['specialty']} ({p['department']})")
+            lines.append(f"• {p['Name']} - {p['Specialty']} ({p['Dept']})")
         return '\n'.join(lines)
     
     def _format_slot_list(self, slots: List[Dict[str, Any]], practitioner_name: str) -> str:
         """Format slot list for display"""
         lines = [f"Available slots for {practitioner_name}:"]
         for slot in slots:
-            lines.append(f"• {slot['date']} {slot['start_time']}-{slot['end_time']} ({slot['duration_minutes']}min)")
+            lines.append(f"• {slot['Date']} {slot['Time']} ({slot['Duration']}) - {slot['Service Type']}")
         return '\n'.join(lines)
     
     def _format_patient_priority_list(self, patients: List[Dict[str, Any]]) -> str:
@@ -488,4 +556,3 @@ Date formats: today, tomorrow, 2024-01-15, next monday
 def create_chatbot() -> ChatbotEngine:
     """Create a chatbot instance"""
     return ChatbotEngine()
-
