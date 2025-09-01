@@ -7,6 +7,8 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, date, timedelta
 import json
+import os
+from pathlib import Path
 
 # Import enhanced modules
 from src.slot_manager import get_slot_manager
@@ -426,7 +428,28 @@ view = st.sidebar.radio(
 # Load patient data
 @st.cache_data
 def load_patients():
-    return pd.read_csv('data/patients.csv')
+    def find_patients_csv():
+        env_dir = os.getenv('VISITIQ_DATA_DIR')
+        if env_dir:
+            candidate = Path(env_dir) / 'patients.csv'
+            if candidate.exists():
+                return candidate
+        candidates = [
+            Path('data') / 'patients.csv',
+            Path.cwd() / 'data' / 'patients.csv',
+            Path(__file__).resolve().parent / 'data' / 'patients.csv'
+        ]
+        base = Path(__file__).resolve()
+        for parent in [base.parent, *base.parents]:
+            candidates.append(parent / 'data' / 'patients.csv')
+        for c in candidates:
+            if c.exists():
+                return c
+        raise FileNotFoundError("patients.csv not found. Set VISITIQ_DATA_DIR or place under data/patients.csv.")
+
+    path = find_patients_csv()
+    st.session_state['patients_csv_path'] = str(path)
+    return pd.read_csv(path)
 
 patients_df = load_patients()
 
@@ -513,7 +536,8 @@ if view == '🤖 AI Chatbot Assistant':
         with st.spinner('🔍 Analyzing your query...'):
             # Process the query
             chatbot = get_chatbot_cached()
-            response = chatbot.process_query(user_query)
+            patients_csv_path = st.session_state.get('patients_csv_path', 'data/patients.csv')
+            response = chatbot.process_query(user_query, patients_csv_path)
             
             # Add to chat history
             st.session_state.chat_history.append((user_query, response.get('message', 'Query processed')))
@@ -687,7 +711,8 @@ if view == '🤖 AI Chatbot Assistant':
         st.subheader("📝 All Physicians")
         
         chatbot = get_chatbot_cached()
-        response = chatbot.process_query('list all physicians')
+        patients_csv_path = st.session_state.get('patients_csv_path', 'data/patients.csv')
+        response = chatbot.process_query('list all physicians', patients_csv_path)
         if response.get('data'):
             df = pd.DataFrame(response['data'])
             # Dynamic height based on data size (35px per row + 50px header)
@@ -715,7 +740,8 @@ if view == '🤖 AI Chatbot Assistant':
         st.subheader("📅 Available Slots Today")
         
         chatbot = get_chatbot_cached()
-        response = chatbot.process_query('available slots today')
+        patients_csv_path = st.session_state.get('patients_csv_path', 'data/patients.csv')
+        response = chatbot.process_query('available slots today', patients_csv_path)
         if response.get('data'):
             df = pd.DataFrame(response['data'])
             # Dynamic height based on data size (35px per row + 50px header)
@@ -742,7 +768,8 @@ if view == '🤖 AI Chatbot Assistant':
         with st.spinner('🔄 Running smart patient prioritization...'):
             try:
                 chatbot = get_chatbot_cached()
-                response = chatbot.process_query('prioritize patients')
+                patients_csv_path = st.session_state.get('patients_csv_path', 'data/patients.csv')
+                response = chatbot.process_query('prioritize patients', patients_csv_path)
                 
                 if response.get('status') == 'success' and response.get('data'):
                     st.success(f"✅ {response.get('message', 'Prioritization completed')}")

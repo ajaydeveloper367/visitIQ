@@ -43,6 +43,10 @@ class SmartLLMHealthcareChatbot:
             # Get relevant data fast
             query_type, relevant_data = self._get_relevant_data(query, patients_csv_path)
             
+            # Retrieve knowledge snippets from local vector DB (RAG)
+            rag_snippets = self._retrieve_similar_docs(query, k=4)
+            snippets_text = "\n\n---\n\n".join(rag_snippets) if rag_snippets else ""
+            
             # LLM provides intelligent medical analysis and reasoning
             prompt = f"""You are an advanced medical AI with clinical reasoning capabilities. 
 
@@ -51,6 +55,9 @@ DATA TYPE: {query_type}
 
 REAL HEALTHCARE DATA:
 {relevant_data}
+
+KNOWLEDGE SNIPPETS (vector DB):
+{snippets_text}
 
 MEDICAL AI INSTRUCTIONS:
 🧠 USE YOUR MEDICAL INTELLIGENCE to:
@@ -108,6 +115,40 @@ Provide your intelligent medical analysis now:"""
                 'message': f'Error processing query: {str(e)}',
                 'suggestions': ['Try rephrasing your question', 'Ask for "help"']
             }
+
+    def _retrieve_similar_docs(self, query_text: str, k: int = 3) -> List[str]:
+        """Query local vector DB under chroma_db/ and return top-k doc texts."""
+        try:
+            import os
+            import json as _json
+            import numpy as _np
+            from sklearn.neighbors import NearestNeighbors as _NN
+            try:
+                from sentence_transformers import SentenceTransformer as _ST
+            except Exception:
+                return []
+
+            base_dir = os.getenv('CHROMA_DIR', 'chroma_db')
+            docs_path = os.path.join(base_dir, 'docs.json')
+            emb_path = os.path.join(base_dir, 'embeddings.npy')
+            if not (os.path.exists(docs_path) and os.path.exists(emb_path)):
+                return []
+
+            with open(docs_path, 'r') as f:
+                docs = _json.load(f)
+            emb = _np.load(emb_path)
+            if not isinstance(docs, list) or emb is None or len(docs) == 0:
+                return []
+
+            model = _ST('all-MiniLM-L6-v2')
+            q_emb = model.encode([query_text], show_progress_bar=False)
+            nn = _NN(n_neighbors=min(k, len(docs)), metric='cosine')
+            nn.fit(emb)
+            _, idxs = nn.kneighbors(q_emb, return_distance=True)
+            idxs = idxs[0].tolist()
+            return [docs[i] for i in idxs]
+        except Exception:
+            return []
     
     def _parse_physician_data(self, relevant_data: str, query: str) -> Dict[str, Any]:
         """FAST physician data parsing - no LLM delays"""
