@@ -11,7 +11,7 @@ import json
 # Import enhanced modules
 from src.slot_manager import get_slot_manager
 from src.smart_prioritizer import SmartPrioritizer
-from src.chatbot import create_chatbot
+from src.smart_llm_chatbot import create_chatbot
 from src.fhir_models import AppointmentStatus
 
 # Page configuration
@@ -373,10 +373,22 @@ def get_prioritizer_cached():
 @st.cache_resource
 def get_chatbot_cached():
     """Get chatbot - initialized when needed"""
-    return create_chatbot()
+    slot_manager = get_slot_manager_cached()
+    # Try to get LLM client for enhanced functionality
+    try:
+        import ollama
+        llm_client = ollama
+    except ImportError:
+        llm_client = None
+    return create_chatbot(slot_manager, llm_client)
 
-# Initialize only the lightweight slot manager at startup
+# Initialize components for optimal hackathon demo performance
 slot_manager = get_slot_manager_cached()
+
+# Background AI model optimization (non-blocking for smooth demo experience)
+if 'models_preloaded' not in st.session_state:
+    st.session_state.models_preloaded = False
+    st.session_state.preload_attempted = False
 
 
 
@@ -437,9 +449,13 @@ if view == '🤖 AI Chatbot Assistant':
         unsafe_allow_html=True
     )
     
-    # Chat interface
+    # Chat interface - FIXED: Proper session state initialization
     if 'chat_history' not in st.session_state:
         st.session_state.chat_history = []
+    
+    # FIXED: Initialize form state to prevent first-run duplicacy  
+    if 'form_submitted' not in st.session_state:
+        st.session_state.form_submitted = False
     
     # Display chat history with beautiful styling
     for i, (user_msg, bot_response) in enumerate(st.session_state.chat_history):
@@ -481,79 +497,143 @@ if view == '🤖 AI Chatbot Assistant':
         unsafe_allow_html=True
     )
     
-    user_query = st.text_input(
-        'Ask a question:',
-        placeholder='💭 "Who are our available endocrinologists?" or "Show me Dr. Chen\'s schedule for tomorrow"',
-        label_visibility='collapsed'
-    )
+    # Simple input form that clears on submit
+    with st.form(key="chat_form", clear_on_submit=True):
+        user_query = st.text_input(
+            'Ask a question:',
+            placeholder='💭 "Who are our available endocrinologists?" or "Show me Dr. Chen\'s schedule for tomorrow"',
+            label_visibility='collapsed'
+        )
+        submitted = st.form_submit_button("Send")
     
-    if user_query:
-        with st.spinner('Processing your query...'):
+    if submitted and user_query and not st.session_state.form_submitted:
+        # FIXED: Prevent first-run duplicacy by tracking form submission state
+        st.session_state.form_submitted = True
+        
+        with st.spinner('🔍 Analyzing your query...'):
+            # Process the query
             chatbot = get_chatbot_cached()
             response = chatbot.process_query(user_query)
             
-            if response['status'] == 'success':
-                formatted_response = response.get('formatted_response', response['message'])
-                
-                # Display structured data if available
-                if 'data' in response and response['data']:
-                    st.success(response['message'])
-                    
-                    # Display data based on query type
-                    if isinstance(response['data'], list) and len(response['data']) > 0:
-                        if 'Name' in response['data'][0] and 'Specialty' in response['data'][0]:
-                            # Physician data with column configuration
-                            df = pd.DataFrame(response['data'])
-                            st.dataframe(
-                                df, 
-                                use_container_width=True,
-                                column_config={
-                                    "ID": st.column_config.TextColumn("ID", width="small"),
-                                    "Name": st.column_config.TextColumn("Name", width="medium"),
-                                    "Specialty": st.column_config.TextColumn("Specialty", width="medium"), 
-                                    "Dept": st.column_config.TextColumn("Department", width="medium"),
-                                    "Contact": st.column_config.TextColumn("Contact", width="medium")
-                                }
-                            )
-                        elif 'Time' in response['data'][0]:
-                            # Slot data - dynamic height based on data size
-                            df = pd.DataFrame(response['data'])
-                            dynamic_height = min(len(df) * 35 + 50, 400)  # Cap at 400px for chat
-                            st.data_editor(
-                                df, 
-                                use_container_width=True,
-                                height=dynamic_height,
-                                disabled=True,  # Read-only
-                                hide_index=True
-                            )
-                        elif 'patient_id' in response['data'][0]:
-                            # Patient priority data
-                            df = pd.DataFrame(response['data'])
-                            st.dataframe(df.style.background_gradient(subset=['score']), use_container_width=True)
-                    
-                    st.code(formatted_response, language='text')
-                else:
-                    st.success(formatted_response)
-            
-            elif response['status'] == 'not_found':
-                st.warning(response['message'])
-                if 'suggestions' in response:
-                    st.write('**Suggestions:**')
-                    for suggestion in response['suggestions']:
-                        st.write(f"• {suggestion}")
-            
-            elif response['status'] == 'no_slots':
-                st.info(response['message'])
-            
-            else:
-                st.error(response.get('message', 'Unknown error occurred'))
-                if 'suggestions' in response:
-                    st.write('**Try these instead:**')
-                    for suggestion in response['suggestions']:
-                        st.write(f"• {suggestion}")
-            
             # Add to chat history
-            st.session_state.chat_history.append((user_query, formatted_response if 'formatted_response' in response else response['message']))
+            st.session_state.chat_history.append((user_query, response.get('message', 'Query processed')))
+        
+        # Reset form state after processing
+        st.session_state.form_submitted = False
+        
+        # Display response immediately
+        if response['status'] == 'success':
+            formatted_response = response.get('formatted_response', response['message'])
+            
+            # Display structured data if available
+            if 'data' in response and response['data']:
+                st.success(response['message'])
+                
+                # Display data based on query type
+                if isinstance(response['data'], list) and len(response['data']) > 0:
+                    if 'Name' in response['data'][0] and 'Specialty' in response['data'][0]:
+                        # Physician data with column configuration
+                        df = pd.DataFrame(response['data'])
+                        st.dataframe(
+                            df, 
+                            use_container_width=True,
+                            column_config={
+                                "ID": st.column_config.TextColumn("ID", width="small"),
+                                "Name": st.column_config.TextColumn("Name", width="medium"),
+                                "Specialty": st.column_config.TextColumn("Specialty", width="medium"), 
+                                "Dept": st.column_config.TextColumn("Department", width="medium"),
+                                "Contact": st.column_config.TextColumn("Contact", width="medium")
+                            }
+                        )
+                    elif 'Time' in response['data'][0]:
+                        # Slot data - dynamic height based on data size
+                        df = pd.DataFrame(response['data'])
+                        dynamic_height = min(len(df) * 35 + 50, 400)  # Cap at 400px for chat
+                        st.data_editor(
+                            df, 
+                            use_container_width=True,
+                            height=dynamic_height,
+                            disabled=True,  # Read-only
+                            hide_index=True
+                        )
+                    elif 'Patient ID' in response['data'][0] and 'Risk Level' in response['data'][0]:
+                        # Patient data with risk assessment and color coding
+                        df = pd.DataFrame(response['data'])
+                        
+                        # Color coding function for risk levels
+                        def highlight_risk_level(val):
+                            if val in ['CRITICAL', 'Emergency']:
+                                return 'background-color: #ffebee; color: #d32f2f; font-weight: 600; border-left: 4px solid #d32f2f;'
+                            elif val in ['HIGH', 'High']:
+                                return 'background-color: #fff3e0; color: #f57c00; font-weight: 600; border-left: 4px solid #f57c00;'
+                            elif val in ['MODERATE', 'Medium']:
+                                return 'background-color: #f3f4f6; color: #6b7280; font-weight: 500; border-left: 4px solid #6b7280;'
+                            elif val in ['LOW', 'Low']:
+                                return 'background-color: #f0f9f0; color: #2e7d32; font-weight: 500; border-left: 4px solid #2e7d32;'
+                            return ''
+                        
+                        # Apply styling with MODERN pandas method (map instead of deprecated applymap)
+                        try:
+                            styled_df = df.style.map(highlight_risk_level, subset=['Risk Level'])  # FIXED: map instead of applymap
+                            print(f"✅ Applied color styling to {len(df)} patients")
+                        except Exception as e:
+                            print(f"❌ Styling error: {e}")
+                            styled_df = df.style  # Fallback to basic styling
+                        
+                        st.dataframe(
+                            styled_df,
+                            use_container_width=True,
+                            height=min(len(df) * 35 + 50, 600),  # Show all patients with scrollbar
+                            column_config={
+                                "Patient ID": st.column_config.TextColumn("ID", width="small"),
+                                "Name": st.column_config.TextColumn("Name", width="medium"),
+                                "Age": st.column_config.NumberColumn("Age", width="small"),
+                                "Condition": st.column_config.TextColumn("Condition", width="medium"),
+                                "Risk Level": st.column_config.TextColumn("Risk", width="small"),
+                                "Risk Score": st.column_config.NumberColumn("Score", width="small"),
+                                "Glucose": st.column_config.TextColumn("Glucose", width="small"),
+                                "BP": st.column_config.TextColumn("BP", width="small"),
+                                "History": st.column_config.TextColumn("History", width="medium"),
+                                "Medical Reasons": st.column_config.TextColumn("Medical Reasons", width="large"),
+                                "Reasoning Source": st.column_config.TextColumn("AI Method", width="medium")
+                            }
+                        )
+                        # Don't show formatted_response for patient tables - avoid duplication
+                        
+                    elif 'patient_id' in response['data'][0]:
+                        # Patient priority data
+                        df = pd.DataFrame(response['data'])
+                        st.dataframe(df.style.background_gradient(subset=['score']), use_container_width=True)
+                        # Don't show formatted_response for priority data - avoid duplication
+                        
+                    else:
+                        # For other data types, show both table and formatted response
+                        st.code(formatted_response, language='text')
+                else:
+                    # Only show formatted_response if no structured data
+                    st.code(formatted_response, language='text')
+            else:
+                st.success(formatted_response)
+            
+        elif response['status'] == 'not_found':
+            st.warning(response['message'])
+            if 'suggestions' in response:
+                st.write('**Suggestions:**')
+                for suggestion in response['suggestions']:
+                    st.write(f"• {suggestion}")
+        
+        elif response['status'] == 'no_slots':
+            st.info(response['message'])
+        
+        else:
+            st.error(response.get('message', 'Unknown error occurred'))
+            if 'suggestions' in response:
+                st.write('**Try these instead:**')
+                for suggestion in response['suggestions']:
+                    st.write(f"• {suggestion}")
+        
+        # Add to chat history (already handled above)
+        # st.session_state.chat_history.append((user_query, formatted_response if 'formatted_response' in response else response['message']))
     
     # Initialize session state for button tracking
     if 'processing_prioritization' not in st.session_state:
@@ -871,10 +951,24 @@ elif view == '🎯 Smart Patient Prioritization':
         )
     
     if st.button('🎯 Run Smart Prioritization', type='primary'):
-        with st.spinner('Running smart prioritization algorithm...'):
+        with st.spinner('🚀 Running optimized AI prioritization...'):
             patients = patients_df.to_dict('records')
             
-            # Get prioritized patients
+            # Background model preloading (first time only, non-blocking)
+            if not st.session_state.preload_attempted:
+                try:
+                    from src.prioritizer import preload_models
+                    preload_models()  # Run in background, don't wait for completion
+                    st.session_state.models_preloaded = True
+                except:
+                    st.session_state.models_preloaded = False
+                st.session_state.preload_attempted = True
+            
+            # Performance metrics for hackathon demo
+            import time
+            start_time = time.time()
+            
+            # Get prioritized patients with optimized batch processing
             practitioner_id = None if selected_physician == 'Auto-Select Best Match' else selected_physician
             prioritizer = get_prioritizer_cached()
             
@@ -885,8 +979,12 @@ elif view == '🎯 Smart Patient Prioritization':
                 max_patients=max_patients
             )
             
+            # Show performance metrics
+            processing_time = time.time() - start_time
+            
             if prioritized_patients:
-                st.success(f'Successfully prioritized {len(prioritized_patients)} patients!')
+                st.success(f'🎯 Successfully prioritized {len(prioritized_patients)} patients in {processing_time:.2f} seconds!')
+                st.info(f'⚡ Processing rate: {len(patients)/processing_time:.1f} patients/second')
                 
                 # Display results
                 priority_data = []
@@ -897,23 +995,26 @@ elif view == '🎯 Smart Patient Prioritization':
                         'Name': patient['name'],
                         'Age': patient['age'],
                         'Condition': patient['condition'],
-                        'Priority Level': patient['base_priority_level'],
-                        'Final Score': round(patient['final_score'], 1),
-                        'Key Reasons': '; '.join(patient.get('base_reasons', [])[:2])  # Top 2 reasons
+                        'Risk Level': patient['base_priority_level'],
+                        'Risk Score': round(patient['base_score'], 1),
+                        'Medical Reasons': '; '.join(patient.get('base_reasons', [])[:2]) if patient.get('base_reasons') else 'Normal parameters',
+                        'AI Method': patient.get('reasoning_source', '❓ Unknown')
                     })
                 
                 priority_df = pd.DataFrame(priority_data)
                 
-                # Color coding for priority levels
+                # Gentle professional color coding for priority levels
                 def highlight_priority(val):
                     if val == 'Emergency':
-                        return 'background-color: #ffebee; color: #c62828;'
+                        return 'background-color: #ffebee; color: #d32f2f; font-weight: 600; border-left: 4px solid #d32f2f;'
                     elif val == 'High':
-                        return 'background-color: #fff3e0; color: #ef6c00;'
+                        return 'background-color: #fff3e0; color: #f57c00; font-weight: 600; border-left: 4px solid #f57c00;'
                     elif val == 'Medium':
-                        return 'background-color: #f3e5f5; color: #7b1fa2;'
-                    else:
-                        return 'background-color: #e8f5e8; color: #2e7d32;'
+                        return 'background-color: #f3f4f6; color: #6b7280; font-weight: 500; border-left: 4px solid #6b7280;'
+                    else:  # Low
+                        return 'background-color: #f0f9f0; color: #2e7d32; font-weight: 500; border-left: 4px solid #2e7d32;'
+                
+
                 
                 # Clean up the display - remove redundant columns if they exist
                 display_df = priority_df.copy()
@@ -924,17 +1025,31 @@ elif view == '🎯 Smart Patient Prioritization':
                 display_df.index = display_df.index + 1
                 display_df.index.name = 'Priority Rank'
                 
-                styled_df = display_df.style.applymap(highlight_priority, subset=['Priority Level'])
+                styled_df = display_df.style.applymap(highlight_priority, subset=['Risk Level'])
+                # Only color code risk levels, not reasoning source
                 # Remove background_gradient due to matplotlib dependency
                 # styled_df = styled_df.background_gradient(subset=['Final Score'], cmap='RdYlGn')
                 
-                st.dataframe(styled_df, use_container_width=True)
+                st.dataframe(
+                    styled_df, 
+                    use_container_width=True,
+                    column_config={
+                        "Patient ID": st.column_config.TextColumn("ID", width="small"),
+                        "Name": st.column_config.TextColumn("Name", width="medium"),
+                        "Age": st.column_config.NumberColumn("Age", width="small"),
+                        "Condition": st.column_config.TextColumn("Condition", width="medium"),
+                        "Risk Level": st.column_config.TextColumn("Risk Level", width="small"),
+                        "Risk Score": st.column_config.NumberColumn("Risk Score", width="small"),
+                        "Medical Reasons": st.column_config.TextColumn("Medical Reasons", width="large"),
+                        "AI Method": st.column_config.TextColumn("AI Method", width="medium")
+                    }
+                )
                 
                 # Summary statistics
                 st.subheader('📊 Prioritization Summary')
                 col1, col2, col3, col4 = st.columns(4)
                 
-                priority_counts = priority_df['Priority Level'].value_counts()
+                priority_counts = priority_df['Risk Level'].value_counts()
                 
                 with col1:
                     st.metric('Emergency Cases', priority_counts.get('Emergency', 0))
