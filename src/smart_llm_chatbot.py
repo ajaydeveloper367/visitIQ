@@ -337,7 +337,26 @@ Provide your intelligent medical analysis now:"""
     def _get_patient_structured_data(self, query: str, patients_csv_path: str) -> List[Dict[str, Any]]:
         """Get structured patient data with OPTIMIZED batch medical reasoning"""
         try:
-            df = pd.read_csv(patients_csv_path)
+            # FIXED: Use enhanced patient manager instead of direct CSV loading
+            try:
+                import sys
+                import os
+                
+                # Add the root src directory to Python path
+                root_src_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'src')
+                if root_src_path not in sys.path:
+                    sys.path.append(root_src_path)
+                
+                from enhanced_patient_manager import get_enhanced_patients_for_prioritization
+                enhanced_patients = get_enhanced_patients_for_prioritization()
+                df = pd.DataFrame(enhanced_patients)
+                print(f"✅ Chatbot using ENHANCED patients: {len(df)} total (CSV + multi-format)")
+            except Exception as e:
+                print(f"⚠️ Enhanced patient loading failed in chatbot: {e}")
+                print("🔄 Falling back to CSV loading...")
+                df = pd.read_csv(patients_csv_path)
+                print(f"📄 Chatbot using CSV fallback: {len(df)} patients")
+            
             query_lower = query.lower()
             
             # 🎯 CORRECT MEDICAL PRIORITIZATION: Process ALL patients, then get top priority ones
@@ -425,7 +444,24 @@ Provide your intelligent medical analysis now:"""
             
         elif query_type == "patient_query":
             try:
-                df = pd.read_csv(patients_csv_path)
+                # FIXED: Use enhanced patient manager for consistent patient count
+                try:
+                    import sys
+                    import os
+                    
+                    # Add the root src directory to Python path
+                    root_src_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'src')
+                    if root_src_path not in sys.path:
+                        sys.path.append(root_src_path)
+                    
+                    from enhanced_patient_manager import get_enhanced_patients_for_prioritization
+                    enhanced_patients = get_enhanced_patients_for_prioritization()
+                    df = pd.DataFrame(enhanced_patients)
+                    print(f"✅ Patient query using ENHANCED patients: {len(df)} total")
+                except Exception as e:
+                    print(f"⚠️ Enhanced patient loading failed in patient query: {e}")
+                    df = pd.read_csv(patients_csv_path)
+                    print(f"📄 Patient query using CSV fallback: {len(df)} patients")
                 
                 if 'how many' in query_lower or 'count' in query_lower:
                     message = f"We have {len(df)} patients total in our system"

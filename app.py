@@ -423,12 +423,56 @@ view = st.sidebar.radio(
     ]
 )
 
-# Load patient data
+# Load patient data with enhanced multi-format support
 @st.cache_data
-def load_patients():
-    return pd.read_csv('data/patients.csv')
+def load_patients(_force_refresh=False):
+    """Load patients with enhanced multi-format document support"""
+    try:
+        import sys
+        import os
+        
+        # Add the root src directory to Python path (app.py is in app/ folder)
+        root_src_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'src')
+        if root_src_path not in sys.path:
+            sys.path.append(root_src_path)
+        
+        from enhanced_patient_manager import get_enhanced_patients_for_prioritization
+        
+        # Get enhanced patients (CSV + multi-format documents)
+        enhanced_patients = get_enhanced_patients_for_prioritization()
+        
+        # Convert to DataFrame for compatibility with existing code
+        patients_df = pd.DataFrame(enhanced_patients)
+        
+        # Show summary of data sources
+        csv_count = len([p for p in enhanced_patients if p.get('document_count', 0) == 0])
+        enhanced_count = len([p for p in enhanced_patients if p.get('document_count', 0) > 0])
+        
+        print(f"📊 Patient Data Loaded:")
+        print(f"   📄 CSV patients: {csv_count}")
+        print(f"   📁 Enhanced (multi-format): {enhanced_count}")
+        print(f"   🎯 Total patients: {len(enhanced_patients)}")
+        
+        return patients_df
+        
+    except Exception as e:
+        print(f"⚠️ Enhanced patient loading failed: {e}")
+        print("🔄 Falling back to basic CSV loading")
+        
+        # Fallback to basic CSV loading
+        return pd.read_csv('data/patients.csv')
 
+# Load patients data (always use enhanced loading)
 patients_df = load_patients()
+
+# Add patient count and refresh button in header area
+col1, col2, col3 = st.columns([3, 2, 1])
+with col1:
+    st.metric("📊 Total Patients", len(patients_df), help="Including CSV and multi-format document patients")
+with col3:
+    if st.button("🔄", help="Refresh data to load new files", key="refresh_btn", type="secondary"):
+        st.cache_data.clear()
+        st.rerun()
 
 # ============ AI CHATBOT ASSISTANT ============
 if view == '🤖 AI Chatbot Assistant':
@@ -1275,3 +1319,5 @@ st.markdown(
     """, 
     unsafe_allow_html=True
 )
+
+
