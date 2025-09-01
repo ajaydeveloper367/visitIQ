@@ -11,8 +11,7 @@ from dataclasses import asdict
 
 from .fhir_models import (
     FHIRPractitioner, FHIRSchedule, FHIRSlot, FHIRAppointment,
-    SlotStatus, AppointmentStatus, FHIRSlotGenerator,
-    create_sample_practitioners, create_sample_schedules
+    SlotStatus, AppointmentStatus
 )
 
 class SlotManager:
@@ -40,9 +39,12 @@ class SlotManager:
         # Load existing data
         self.load_data()
         
-        # Initialize with sample data if empty
+        # Check if data exists, otherwise suggest data generation
         if not self._practitioners:
-            self.initialize_sample_data()
+            print("⚠️  No healthcare data found!")
+            print("📋 Please run the data generator first:")
+            print("    python tools/generate_data.py")
+            print("🏥 This will create physicians, schedules, and appointment slots.")
     
     # ============ Data Persistence ============
     
@@ -90,34 +92,7 @@ class SlotManager:
                 data = json.load(f)
                 self._appointments = {a['id']: FHIRAppointment.from_dict(a) for a in data}
     
-    def initialize_sample_data(self):
-        """Initialize with sample practitioners, schedules, and slots"""
-        # Create sample practitioners and schedules
-        practitioners = create_sample_practitioners()
-        schedules = create_sample_schedules()
-        
-        for p in practitioners:
-            self._practitioners[p.id] = p
-        
-        for s in schedules:
-            self._schedules[s.id] = s
-        
-        # Generate slots for the next 2 weeks
-        start_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        
-        for practitioner_id, practitioner in self._practitioners.items():
-            schedule = next((s for s in self._schedules.values() if s.practitioner_id == practitioner_id), None)
-            if schedule:
-                # Generate 2 weeks of slots
-                for week in range(2):
-                    week_start = start_date + timedelta(weeks=week)
-                    weekly_slots = FHIRSlotGenerator.generate_weekly_slots(
-                        practitioner, schedule, week_start
-                    )
-                    for slot in weekly_slots:
-                        self._slots[slot.id] = slot
-        
-        self.save_data()
+
     
     # ============ Practitioner Operations ============
     
@@ -395,4 +370,3 @@ def get_slot_manager() -> SlotManager:
     if _slot_manager_instance is None:
         _slot_manager_instance = SlotManager()
     return _slot_manager_instance
-

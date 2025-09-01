@@ -1,0 +1,230 @@
+#!/bin/bash
+# VisitIQ Healthcare System - Service Management Script
+# Usage: ./visitiq {start|stop|restart|status|logs|generate-data}
+
+set -e
+
+INSTALL_DIR="$(cd "$(dirname "$0")" && pwd)"
+PIDFILE="$INSTALL_DIR/logs/visitiq.pid"
+LOGFILE="$INSTALL_DIR/logs/visitiq.log"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# Ensure logs directory exists
+mkdir -p "$INSTALL_DIR/logs"
+
+start_service() {
+    if [[ -f "$PIDFILE" ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+        echo -e "${YELLOW}VisitIQ is already running (PID: $(cat "$PIDFILE"))${NC}"
+        return 1
+    fi
+    
+    echo -e "${BLUE}🏥 Starting VisitIQ Healthcare System...${NC}"
+    
+    cd "$INSTALL_DIR"
+    source venv/bin/activate
+    
+    export PYTHONPATH="$INSTALL_DIR/app:$PYTHONPATH"
+    export CHROMA_DIR="$INSTALL_DIR/chroma_db"
+    export OLLAMA_URL="http://localhost:11434"
+    
+    # Start Ollama if not running
+    if ! curl -s http://localhost:11434/api/tags >/dev/null 2>&1; then
+        echo "🤖 Starting Ollama service..."
+        ollama serve &>/dev/null &
+        sleep 3
+    fi
+    
+    # Start VisitIQ in background
+    nohup streamlit run app/app.py --server.port=8501 --server.headless=true > "$LOGFILE" 2>&1 &
+    echo $! > "$PIDFILE"
+    
+    sleep 3
+    
+    if kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+        echo -e "${GREEN}✅ VisitIQ started successfully (PID: $(cat "$PIDFILE"))${NC}"
+        echo -e "${GREEN}🌐 Web interface: http://localhost:8501${NC}"
+        
+        # Open browser automatically (suppress errors)
+        (sleep 2 && open http://localhost:8501) &>/dev/null &
+    else
+        echo -e "${RED}❌ Failed to start VisitIQ${NC}"
+        rm -f "$PIDFILE"
+        return 1
+    fi
+}
+
+stop_service() {
+    if [[ -f "$PIDFILE" ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+        echo -e "${YELLOW}🛑 Stopping VisitIQ...${NC}"
+        kill "$(cat "$PIDFILE")" 2>/dev/null
+        rm -f "$PIDFILE"
+        
+        # Also kill any lingering streamlit processes
+        pkill -f "streamlit.*app.py" 2>/dev/null || true
+        
+        echo -e "${GREEN}✅ VisitIQ stopped${NC}"
+    else
+        echo -e "${YELLOW}VisitIQ is not running${NC}"
+        rm -f "$PIDFILE" 2>/dev/null || true
+    fi
+}
+
+status_service() {
+    echo -e "${BLUE}🏥 VisitIQ System Status${NC}"
+    echo "========================"
+    
+    # Check process
+    if [[ -f "$PIDFILE" ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+        echo -e "${GREEN}✅ VisitIQ: Running (PID: $(cat "$PIDFILE"))${NC}"
+        
+        # Check web interface
+        if curl -s http://localhost:8501 >/dev/null 2>&1; then
+            echo -e "${GREEN}✅ Web interface: http://localhost:8501${NC}"
+        else
+            echo -e "${YELLOW}⚠️  Web interface: Not responding${NC}"
+        fi
+    else
+        echo -e "${RED}❌ VisitIQ: Not running${NC}"
+        rm -f "$PIDFILE" 2>/dev/null || true
+    fi
+    
+    # Check Python environment
+    if [[ -f "$INSTALL_DIR/venv/bin/activate" ]]; then
+        source "$INSTALL_DIR/venv/bin/activate"
+        echo -e "${GREEN}✅ Python environment: $(python --version)${NC}"
+    else
+        echo -e "${RED}❌ Python environment: Missing${NC}"
+    fi
+    
+    # Check Ollama
+    if curl -s http://localhost:11434/api/tags >/dev/null 2>&1; then
+        echo -e "${GREEN}✅ Ollama service: Running${NC}"
+        MODELS=$(ollama list 2>/dev/null | tail -n +2 | wc -l | tr -d ' ')
+        echo -e "${GREEN}   📦 AI Models: $MODELS available${NC}"
+    else
+        echo -e "${YELLOW}⚠️  Ollama service: Not running${NC}"
+    fi
+    
+    # Check data
+    if [[ -f "$INSTALL_DIR/data/patients.csv" ]]; then
+        PATIENTS=$(tail -n +2 "$INSTALL_DIR/data/patients.csv" | wc -l | tr -d ' ')
+        echo -e "${GREEN}✅ Healthcare data: $PATIENTS patients loaded${NC}"
+    else
+        echo -e "${RED}❌ Healthcare data: Missing (run: ./visitiq generate-data)${NC}"
+    fi
+    
+    # Check disk usage
+    DISK_USAGE=$(du -sh "$INSTALL_DIR" 2>/dev/null | cut -f1)
+    echo -e "${BLUE}💾 Installation size: $DISK_USAGE${NC}"
+}
+
+show_logs() {
+    if [[ -f "$LOGFILE" ]]; then
+        echo -e "${BLUE}📄 VisitIQ Logs (last 50 lines):${NC}"
+        echo "================================="
+        tail -50 "$LOGFILE"
+    else
+        echo -e "${YELLOW}No log file found at: $LOGFILE${NC}"
+    fi
+}
+
+generate_data() {
+    echo -e "${BLUE}📊 Generating healthcare data...${NC}"
+    cd "$INSTALL_DIR"
+    source venv/bin/activate
+    python tools/generate_data.py --data-dir data "$@"
+    echo -e "${GREEN}✅ Data generation complete!${NC}"
+    echo -e "${BLUE}🚀 Ready to start: ./visitiq start${NC}"
+}
+
+uninstall_service() {
+    echo -e "${RED}🗑️  VisitIQ Uninstaller${NC}"
+    echo "========================="
+    echo -e "${YELLOW}This will completely remove VisitIQ and all its data.${NC}"
+    echo
+    echo "Installation location: $INSTALL_DIR"
+    echo
+    
+    read -p "Are you sure you want to uninstall VisitIQ? (y/N): " -n 1 -r
+    echo
+    
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        echo -e "${YELLOW}🛑 Stopping VisitIQ...${NC}"
+        stop_service
+        
+        echo -e "${YELLOW}🧹 Removing installation...${NC}"
+        cd /
+        rm -rf "$INSTALL_DIR"
+        
+        # Remove desktop app (macOS)
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            rm -rf "$HOME/Applications/VisitIQ.app" 2>/dev/null || true
+        fi
+        
+        echo -e "${GREEN}✅ VisitIQ uninstalled successfully${NC}"
+        echo
+        echo -e "${BLUE}Optional cleanup (run manually if desired):${NC}"
+        echo "• Remove Ollama: brew uninstall ollama"
+        echo "• Stop Ollama service: brew services stop ollama"
+    else
+        echo -e "${YELLOW}Uninstall cancelled.${NC}"
+    fi
+}
+
+# Main command handling
+case "${1:-}" in
+    start)
+        start_service
+        ;;
+    stop)
+        stop_service
+        ;;
+    restart)
+        stop_service
+        sleep 2
+        start_service
+        ;;
+    status)
+        status_service
+        ;;
+    logs)
+        show_logs
+        ;;
+    generate-data)
+        shift
+        generate_data "$@"
+        ;;
+    uninstall)
+        uninstall_service
+        ;;
+    *)
+        echo -e "${BLUE}🏥 VisitIQ Healthcare System - Management Script${NC}"
+        echo "================================================="
+        echo
+        echo "Usage: $0 {start|stop|restart|status|logs|generate-data|uninstall}"
+        echo
+        echo -e "${BLUE}Commands:${NC}"
+        echo "  start         Start VisitIQ system and open browser"
+        echo "  stop          Stop VisitIQ system" 
+        echo "  restart       Restart VisitIQ system"
+        echo "  status        Show detailed system status"
+        echo "  logs          Show application logs (last 50 lines)"
+        echo "  generate-data Generate sample healthcare data"
+        echo "  uninstall     Remove VisitIQ completely"
+        echo
+        echo -e "${BLUE}Examples:${NC}"
+        echo "  ./visitiq start"
+        echo "  ./visitiq status"
+        echo "  ./visitiq generate-data --patients 100 --physicians 15"
+        echo "  ./visitiq logs"
+        echo
+        echo -e "${BLUE}🌐 Web Interface:${NC} http://localhost:8501"
+        exit 1
+        ;;
+esac

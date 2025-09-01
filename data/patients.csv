@@ -1,11 +1,11 @@
 patient_id,name,age,condition,glucose_mg_dL,bp_systolic,bp_diastolic,heart_rate,bmi,notes,history
-1,Rajesh Kumar,58,Type 2 Diabetes,325,168,100,105,28,"Foot ulcer developing on right foot","Hypertension; Diabetic neuropathy"
-2,Asha Patel,45,Type 2 Diabetes,220,140,90,85,31,"Overweight, needs diet plan","Family history of kidney disease"
-3,Meera Sharma,36,Gestational Diabetes,115,122,78,78,24,"Controlled with diet and metformin","First pregnancy"
-4,Imran Sheikh,62,Type 2 Diabetes,410,180,110,115,26,"Reports dizziness and reduced urine output","CKD stage 3; previous stroke"
-5,Suresh Rao,70,Type 2 Diabetes,190,150,95,95,29,"Mild shortness of breath on exertion","Ischemic heart disease"
-6,Neha Gupta,50,Type 2 Diabetes,275,155,98,102,33,"Poor medication adherence last month","Obesity; smoker"
-7,Anil Verma,30,Type 1 Diabetes,85,118,76,72,23,"Good control on insulin pump","No major comorbidities"
-8,Kavita Singh,55,Type 2 Diabetes,360,170,105,110,30,"Confusion reported last 24 hours","History of stroke"
-9,Raul Fernandes,48,Prediabetes,140,130,82,80,27,"Borderline sugars, lifestyle counselling","Family history diabetes"
-10,Pooja Mehta,66,Type 2 Diabetes,305,160,102,108,32,"Non-healing ulcer left foot","Peripheral vascular disease"
+1,Jason Perez,53,Type 1 Diabetes,252,116,72,84,21.1,Patient reports good medication adherence,Peripheral vascular disease; Previous stroke
+2,Ryan Wright,33,Stroke History,104,120,105,78,40.5,Needs dietary counseling,Heart attack history; Peripheral vascular disease; Smoking history
+3,Jennifer Nelson,47,Prediabetes,85,139,76,84,25.9,Difficulty with glucose monitoring,Heart attack history; High cholesterol; Depression
+4,Anthony Nelson,52,Prediabetes,123,119,108,100,23.0,Medication side effects reported,Smoking history; High cholesterol; Diabetic neuropathy
+5,Paul Green,46,Type 2 Diabetes,108,124,71,111,26.9,Follow-up in 3 months,Hypertension; Smoking history
+6,Kenneth Wilson,81,Type 2 Diabetes,409,189,94,76,22.2,Follow-up in 3 months,Retinopathy; Depression; Previous stroke
+7,Jason Nguyen,69,Type 2 Diabetes,150,142,85,65,38.5,Foot exam due,High cholesterol
+8,Jason Hill,26,Type 2 Diabetes,385,169,101,76,44.2,Needs dietary counseling,Sleep apnea
+9,Paul Roberts,61,Type 1 Diabetes,302,150,99,60,43.8,Exercise program recommended,Previous stroke; Retinopathy; High cholesterol
+10,Susan Parker,56,Gestational Diabetes,339,178,91,69,28.4,Exercise program recommended,Retinopathy

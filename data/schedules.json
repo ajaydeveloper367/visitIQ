@@ -1,0 +1,67 @@
+[
+  {
+    "id": "sched-001",
+    "practitioner_id": "prac-001",
+    "service_category": "nephrology",
+    "service_type": [
+      "kidney-consultation",
+      "dialysis-eval",
+      "transplant-consult"
+    ],
+    "specialty": "Nephrology",
+    "planning_horizon": 30,
+    "comment": "Nephrology scheduling"
+  },
+  {
+    "id": "sched-002",
+    "practitioner_id": "prac-002",
+    "service_category": "endocrinology",
+    "service_type": [
+      "diabetes-consultation",
+      "hormone-therapy",
+      "follow-up"
+    ],
+    "specialty": "Endocrinology",
+    "planning_horizon": 30,
+    "comment": "Endocrinology scheduling"
+  },
+  {
+    "id": "sched-003",
+    "practitioner_id": "prac-003",
+    "service_category": "nephrology",
+    "service_type": [
+      "kidney-consultation",
+      "dialysis-eval",
+      "transplant-consult"
+    ],
+    "specialty": "Nephrology",
+    "planning_horizon": 30,
+    "comment": "Nephrology scheduling"
+  },
+  {
+    "id": "sched-004",
+    "practitioner_id": "prac-004",
+    "service_category": "orthopedics",
+    "service_type": [
+      "joint-eval",
+      "orthopedic-consult",
+      "post-op-check"
+    ],
+    "specialty": "Orthopedics",
+    "planning_horizon": 30,
+    "comment": "Orthopedics scheduling"
+  },
+  {
+    "id": "sched-005",
+    "practitioner_id": "prac-005",
+    "service_category": "family-medicine",
+    "service_type": [
+      "general-consultation",
+      "preventive-care",
+      "chronic-disease"
+    ],
+    "specialty": "Family Medicine",
+    "planning_horizon": 30,
+    "comment": "Family Medicine scheduling"
+  }
+]

@@ -1,0 +1,68 @@
+[
+  {
+    "id": "prac-001",
+    "name": "Dr. Joseph Johnson",
+    "specialty": "Nephrology",
+    "department": "Internal Medicine",
+    "qualification": [
+      "MD",
+      "Board Certified Nephrology"
+    ],
+    "active": true,
+    "contact_phone": "+1-555-4657",
+    "contact_email": "joseph.johnson@hospital.com"
+  },
+  {
+    "id": "prac-002",
+    "name": "Dr. Sarah Mitchell",
+    "specialty": "Endocrinology",
+    "department": "Internal Medicine",
+    "qualification": [
+      "MD",
+      "Board Certified Internal Medicine",
+      "Board Certified Endocrinology"
+    ],
+    "active": true,
+    "contact_phone": "+1-555-7912",
+    "contact_email": "sarah.mitchell@hospital.com"
+  },
+  {
+    "id": "prac-003",
+    "name": "Dr. Robert Johnson",
+    "specialty": "Nephrology",
+    "department": "Internal Medicine",
+    "qualification": [
+      "MD",
+      "Board Certified Nephrology"
+    ],
+    "active": true,
+    "contact_phone": "+1-555-4811",
+    "contact_email": "robert.johnson@hospital.com"
+  },
+  {
+    "id": "prac-004",
+    "name": "Dr. Patricia Scott",
+    "specialty": "Orthopedics",
+    "department": "Orthopedic Surgery",
+    "qualification": [
+      "MD",
+      "Board Certified Orthopedics"
+    ],
+    "active": true,
+    "contact_phone": "+1-555-4611",
+    "contact_email": "patricia.scott@hospital.com"
+  },
+  {
+    "id": "prac-005",
+    "name": "Dr. Helen Nguyen",
+    "specialty": "Family Medicine",
+    "department": "Primary Care",
+    "qualification": [
+      "MD",
+      "Board Certified Family Medicine"
+    ],
+    "active": true,
+    "contact_phone": "+1-555-3615",
+    "contact_email": "helen.nguyen@hospital.com"
+  }
+]
