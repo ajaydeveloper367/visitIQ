@@ -131,10 +131,30 @@ class SmartPrioritizer:
             
             prioritized_patients.append(enhanced_patient)
         
+        # MEDICAL WORKFLOW: Group patients by appropriate department first
+        if consider_specialty_match and practitioner:
+            # Step 1: Determine which patients belong to this physician's department
+            department_patients = []
+            
+            for patient in prioritized_patients:
+                # Determine which department this patient should visit
+                patient_department = self._determine_patient_department(patient)
+                
+                # Only include patients who should visit this physician's department
+                if self._is_department_match(patient_department, practitioner.specialty):
+                    department_patients.append(patient)
+            
+            print(f"🏥 Department Filter: {len(department_patients)}/{len(prioritized_patients)} patients belong to {practitioner.specialty}")
+            print(f"   📋 Showing ALL risk levels within this department (Critical, High, Medium, Low)")
+            appropriate_patients = department_patients
+        else:
+            # For auto-select or general queries, show all patients
+            appropriate_patients = prioritized_patients
+        
         # Sort by medical priority FIRST, then by final score
         # This ensures Emergency/High patients are always ranked higher than Low/Medium
         priority_order = {'Emergency': 4, 'High': 3, 'Medium': 2, 'Low': 1}
-        prioritized_patients.sort(
+        appropriate_patients.sort(
             key=lambda x: (
                 priority_order.get(x['base_priority_level'], 0),  # Medical priority first
                 x['final_score']  # Then by calculated score
@@ -143,7 +163,7 @@ class SmartPrioritizer:
         )
         
         # Select top N patients for available slots
-        selected_patients = prioritized_patients[:max_patients]
+        selected_patients = appropriate_patients[:max_patients]
         
         # Mark selected patients as recommended for booking
         for patient in selected_patients:
@@ -268,46 +288,256 @@ class SmartPrioritizer:
         patient: Dict[str, Any], 
         practitioner: FHIRPractitioner
     ) -> float:
-        """Calculate how well a patient matches with practitioner's specialty"""
+        """Calculate how well a patient matches with practitioner's specialty using LLM intelligence"""
+        try:
+            # Use LLM for intelligent specialty matching
+            return self._llm_specialty_match(patient, practitioner)
+        except Exception as e:
+            print(f"⚠️ LLM specialty matching failed: {e}")
+            # Fallback to enhanced rule-based matching
+            return self._rule_based_specialty_match(patient, practitioner)
+    
+    def _llm_specialty_match(self, patient: Dict[str, Any], practitioner: FHIRPractitioner) -> float:
+        """Use LLM to intelligently match patient conditions to specialist"""
+        import requests
+        import json
+        
+        # Prepare medical context for LLM
+        patient_profile = f"""
+        Patient Condition: {patient.get('condition', 'Unknown')}
+        Medical History: {patient.get('history', 'None')}
+        Age: {patient.get('age', 'Unknown')}
+        Glucose: {patient.get('glucose_mg_dL', 'Unknown')} mg/dL
+        Blood Pressure: {patient.get('bp_systolic', 'Unknown')}/{patient.get('bp_diastolic', 'Unknown')}
+        """
+        
+        specialist_info = f"""
+        Specialist: {practitioner.specialty}
+        Department: {practitioner.department}
+        """
+        
+        prompt = f"""You are a medical AI assistant. Analyze if this patient should be prioritized for this specialist.
+
+{patient_profile}
+
+{specialist_info}
+
+Rate the medical appropriateness (0-100):
+- 90-100: Perfect match (e.g., diabetic patient → Endocrinologist)
+- 70-89: Good match (e.g., heart condition → Cardiologist) 
+- 50-69: Moderate match (e.g., general condition → Family Medicine)
+- 30-49: Poor match (e.g., eye problem → Orthopedist)
+- 0-29: No match (e.g., diabetes → Orthopedist)
+
+Return only a number 0-100."""
+
+        try:
+            response = requests.post(
+                'http://localhost:11434/api/generate',
+                json={
+                    'model': 'llama3',
+                    'prompt': prompt,
+                    'stream': False,
+                    'options': {'temperature': 0.1, 'num_ctx': 2048}
+                },
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                llm_response = result.get('response', '50').strip()
+                
+                # Extract numeric score
+                import re
+                score_match = re.search(r'\b(\d{1,3})\b', llm_response)
+                if score_match:
+                    score = min(100, max(0, int(score_match.group(1))))
+                    return score
+                    
+        except Exception as e:
+            print(f"⚠️ LLM API call failed: {e}")
+            
+        # Fallback score
+        return 50
+    
+    def _rule_based_specialty_match(self, patient: Dict[str, Any], practitioner: FHIRPractitioner) -> float:
+        """Enhanced rule-based specialty matching as fallback"""
         patient_condition = str(patient.get('condition', '')).lower()
         patient_history = str(patient.get('history', '')).lower()
         practitioner_specialty = practitioner.specialty.lower()
         
         match_score = 0
         
-        # Diabetes conditions
+        # Enhanced medical specialty matching rules
+        
+        # Diabetes conditions → Endocrinology (Perfect match)
         if any(term in patient_condition for term in ['diabetes', 'diabetic']):
-            if practitioner_specialty in ['endocrinology']:
-                match_score += 30
+            if 'endocrinology' in practitioner_specialty:
+                match_score += 90  # Perfect match
             elif practitioner_specialty in ['family medicine', 'internal medicine']:
-                match_score += 20
+                match_score += 60  # Good secondary option
+            else:
+                match_score += 20  # Poor match - below 50 threshold
         
-        # Cardiovascular conditions  
-        if any(term in patient_history for term in ['heart', 'cardiac', 'stroke', 'hypertension']):
-            if practitioner_specialty in ['cardiology']:
-                match_score += 30
+        # Heart conditions → Cardiology
+        elif any(term in patient_condition for term in ['heart', 'cardiac', 'cardiovascular', 'hypertension']):
+            if 'cardiology' in practitioner_specialty:
+                match_score += 90  # Perfect match
             elif practitioner_specialty in ['family medicine', 'internal medicine']:
-                match_score += 15
+                match_score += 60  # Good secondary option
+            else:
+                match_score += 20  # Poor match - below 50 threshold
         
-        # Kidney/renal conditions
-        if any(term in patient_history for term in ['ckd', 'kidney', 'renal']):
-            if practitioner_specialty in ['nephrology']:
-                match_score += 30
-            elif practitioner_specialty in ['endocrinology', 'internal medicine']:
-                match_score += 20
+        # Bone/Joint conditions → Orthopedics
+        elif any(term in patient_condition for term in ['fracture', 'arthritis', 'joint', 'bone', 'orthopedic']):
+            if 'orthopedic' in practitioner_specialty or 'orthopedic' in practitioner_specialty:
+                match_score += 90  # Perfect match
+            elif practitioner_specialty in ['family medicine']:
+                match_score += 40  # Moderate match
+            else:
+                match_score += 20  # Poor match - below 50 threshold
         
-        # Pregnancy-related
-        if 'gestational' in patient_condition:
-            if practitioner_specialty in ['obstetrics', 'maternal-fetal medicine']:
-                match_score += 30
-            elif practitioner_specialty in ['endocrinology', 'family medicine']:
-                match_score += 20
+        # Neurological conditions → Neurology
+        elif any(term in patient_condition for term in ['stroke', 'seizure', 'neurological', 'brain']):
+            if 'neurology' in practitioner_specialty:
+                match_score += 90  # Perfect match
+            elif practitioner_specialty in ['family medicine', 'internal medicine']:
+                match_score += 50  # Moderate match
+            else:
+                match_score += 20  # Poor match - below 50 threshold
         
-        # General medicine fallback
-        if match_score == 0 and practitioner_specialty in ['family medicine', 'internal medicine']:
-            match_score += 10
+        # General/Family Medicine - good for most conditions
+        elif 'family medicine' in practitioner_specialty or 'internal medicine' in practitioner_specialty:
+            match_score += 70  # Good general match
         
-        return match_score
+        # Default moderate match for any specialist
+        else:
+            match_score += 50
+        
+        return min(100, match_score)
+    
+    def auto_select_best_matches(
+        self,
+        patients: List[Dict[str, Any]],
+        target_date: Optional[date] = None,
+        max_patients: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Auto-select best physician matches for each patient based on medical conditions
+        Returns patients with recommended physicians and departments
+        """
+        # Get all available practitioners
+        practitioners = self.slot_manager.get_practitioners()
+        
+        # First, prioritize all patients medically
+        try:
+            priority_results = rag_prioritize_batch(patients)
+            llm_success_count = len(priority_results)
+            rule_fallback_count = 0
+        except Exception as e:
+            print(f"⚠️ LLM batch processing failed: {e}")
+            priority_results = []
+            for patient in patients:
+                priority_result = rule_based_priority_row(patient)
+                priority_result['reasoning_source'] = '📋 Clinical Rules (LLM Batch Failed)'
+                priority_results.append(priority_result)
+            llm_success_count = 0
+            rule_fallback_count = len(priority_results)
+        
+        print(f"🧠 LLM Medical Intelligence: {llm_success_count} patients")
+        print(f"📋 Rule-based Fallback: {rule_fallback_count} patients")
+        
+        # Match each patient to best physician
+        matched_patients = []
+        for i, (patient, priority_result) in enumerate(zip(patients, priority_results)):
+            # Find best physician match for this patient
+            best_physician = None
+            best_score = 0
+            
+            for practitioner in practitioners:
+                match_score = self._calculate_specialty_match_score(patient, practitioner)
+                if match_score > best_score:
+                    best_score = match_score
+                    best_physician = practitioner
+            
+            # Enhanced patient record with auto-selected physician
+            enhanced_patient = {
+                **patient,
+                'base_priority_level': priority_result.get('priority_level', 'Low'),
+                'base_score': priority_result.get('score', 0),
+                'base_reasons': priority_result.get('reasons', []),
+                'reasoning_source': priority_result.get('reasoning_source', '❓ Unknown'),
+                'recommended_physician_id': best_physician.id if best_physician else None,
+                'recommended_physician_name': best_physician.name if best_physician else 'No match',
+                'recommended_department': best_physician.specialty if best_physician else 'General',
+                'specialty_match_score': best_score,
+                'final_score': priority_result.get('score', 0) + best_score,
+                'recommended_for_booking': best_score > 70  # High confidence match
+            }
+            
+            matched_patients.append(enhanced_patient)
+        
+        # Sort by medical priority first, then by specialty match score
+        priority_order = {'Emergency': 4, 'High': 3, 'Medium': 2, 'Low': 1}
+        matched_patients.sort(
+            key=lambda x: (
+                priority_order.get(x['base_priority_level'], 1),
+                x['specialty_match_score'],
+                x['base_score']
+            ),
+            reverse=True
+        )
+        
+        # Limit results if requested
+        if max_patients:
+            matched_patients = matched_patients[:max_patients]
+        
+        return matched_patients
+    
+    def _determine_patient_department(self, patient: Dict[str, Any]) -> str:
+        """
+        Determine which medical department a patient should visit based on their condition
+        Returns the primary department name
+        """
+        condition = str(patient.get('condition', '')).lower()
+        history = str(patient.get('history', '')).lower()
+        
+        # Primary condition-to-department mapping
+        if any(term in condition for term in ['diabetes', 'diabetic', 'glucose', 'insulin']):
+            return 'Endocrinology'
+        elif any(term in condition for term in ['heart', 'cardiac', 'cardiovascular', 'hypertension', 'blood pressure']):
+            return 'Cardiology'
+        elif any(term in condition for term in ['fracture', 'arthritis', 'joint', 'bone', 'orthopedic']):
+            return 'Orthopedics'
+        elif any(term in condition for term in ['stroke', 'seizure', 'neurological', 'brain']):
+            return 'Neurology'
+        elif any(term in condition for term in ['kidney', 'renal', 'dialysis']):
+            return 'Nephrology'
+        elif any(term in condition for term in ['lung', 'respiratory', 'asthma', 'copd']):
+            return 'Pulmonology'
+        else:
+            # Default to Family Medicine for general conditions
+            return 'Family Medicine'
+    
+    def _is_department_match(self, patient_department: str, physician_specialty: str) -> bool:
+        """
+        Check if a patient's required department matches the physician's specialty
+        """
+        patient_dept = patient_department.lower()
+        physician_spec = physician_specialty.lower()
+        
+        # Direct matches
+        if patient_dept in physician_spec or physician_spec in patient_dept:
+            return True
+        
+        # Family Medicine can see most patients (except highly specialized cases)
+        if 'family medicine' in physician_spec or 'internal medicine' in physician_spec:
+            # Family doctors can handle general cases but not highly specialized ones
+            if patient_department in ['Endocrinology', 'Cardiology', 'Orthopedics', 'Neurology']:
+                return False  # These need specialists
+            return True
+        
+        return False
     
     def _calculate_urgency_modifier(
         self, 

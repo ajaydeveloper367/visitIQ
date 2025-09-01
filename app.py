@@ -971,10 +971,19 @@ elif view == '🎯 Smart Patient Prioritization':
     with col1:
         physicians = slot_manager.get_practitioners()
         physician_options = ['Auto-Select Best Match'] + [p.id for p in physicians]
+        
+        def format_physician_option(x):
+            if x == 'Auto-Select Best Match':
+                return '🤖 Auto-Select Best Match'
+            else:
+                physician = next(p for p in physicians if p.id == x)
+                return f"Dr. {physician.name} ({physician.specialty})"
+        
         selected_physician = st.selectbox(
             'Select Physician:',
             options=physician_options,
-            format_func=lambda x: 'Auto-Select Best Match' if x == 'Auto-Select Best Match' else next(p.name for p in physicians if p.id == x)
+            format_func=format_physician_option,
+            help="Choose a specific physician or let AI auto-select the best matches for each patient"
         )
     
     with col2:
@@ -1016,12 +1025,21 @@ elif view == '🎯 Smart Patient Prioritization':
             practitioner_id = None if selected_physician == 'Auto-Select Best Match' else selected_physician
             prioritizer = get_prioritizer_cached()
             
-            prioritized_patients = prioritizer.prioritize_patients_for_slots(
-                patients=patients,
-                practitioner_id=practitioner_id,
-                target_date=priority_date,
-                max_patients=max_patients
-            )
+            if selected_physician == 'Auto-Select Best Match':
+                # Auto-select: Get best matches for each patient across all physicians
+                prioritized_patients = prioritizer.auto_select_best_matches(
+                    patients=patients,
+                    target_date=priority_date,
+                    max_patients=max_patients
+                )
+            else:
+                # Specific physician: Prioritize patients for that physician
+                prioritized_patients = prioritizer.prioritize_patients_for_slots(
+                    patients=patients,
+                    practitioner_id=practitioner_id,
+                    target_date=priority_date,
+                    max_patients=max_patients
+                )
             
             # Show performance metrics
             processing_time = time.time() - start_time
@@ -1033,15 +1051,47 @@ elif view == '🎯 Smart Patient Prioritization':
                 # Display results
                 priority_data = []
                 for i, patient in enumerate(prioritized_patients, 1):
+                    # Get recommended physician info
+                    recommended_physician = "Not specified"
+                    recommended_department = "General"
+                    
+                    if selected_physician == 'Auto-Select Best Match':
+                        # Show which physician was auto-selected for this patient
+                        if 'recommended_physician_id' in patient:
+                            physician = next((p for p in physicians if p.id == patient['recommended_physician_id']), None)
+                            if physician:
+                                recommended_physician = f"Dr. {physician.name}"
+                                recommended_department = physician.specialty
+                        else:
+                            # Determine best match based on condition
+                            condition = patient.get('condition', '').lower()
+                            if 'diabetes' in condition:
+                                recommended_department = "Endocrinology"
+                            elif any(term in condition for term in ['heart', 'cardiac', 'hypertension']):
+                                recommended_department = "Cardiology"
+                            elif any(term in condition for term in ['bone', 'joint', 'fracture']):
+                                recommended_department = "Orthopedics"
+                            else:
+                                recommended_department = "Family Medicine"
+                            recommended_physician = f"Any {recommended_department} specialist"
+                    else:
+                        # Show selected physician
+                        physician = next((p for p in physicians if p.id == selected_physician), None)
+                        if physician:
+                            recommended_physician = f"Dr. {physician.name}"
+                            recommended_department = physician.specialty
+                    
                     priority_data.append({
-                        'Rank': i,
-                        'Patient ID': patient['patient_id'],
+                        'Priority Rank': i,
+                        'ID': patient['patient_id'],
                         'Name': patient['name'],
                         'Age': patient['age'],
                         'Condition': patient['condition'],
                         'Risk Level': patient['base_priority_level'],
                         'Risk Score': round(patient['base_score'], 1),
                         'Medical Reasons': '; '.join(patient.get('base_reasons', [])[:2]) if patient.get('base_reasons') else 'Normal parameters',
+                        'Recommended Physician': recommended_physician,
+                        'Department': recommended_department,
                         'AI Method': patient.get('reasoning_source', '❓ Unknown')
                     })
                 
@@ -1078,10 +1128,12 @@ elif view == '🎯 Smart Patient Prioritization':
                     styled_df, 
                     use_container_width=True,
                     column_config={
-                        "Patient ID": st.column_config.TextColumn("ID", width="small"),
+                        "ID": st.column_config.TextColumn("ID", width="small"),
                         "Name": st.column_config.TextColumn("Name", width="medium"),
                         "Age": st.column_config.NumberColumn("Age", width="small"),
                         "Condition": st.column_config.TextColumn("Condition", width="medium"),
+                        "Recommended Physician": st.column_config.TextColumn("👨‍⚕️ Recommended Physician", width="medium"),
+                        "Department": st.column_config.TextColumn("🏥 Department", width="medium"),
                         "Risk Level": st.column_config.TextColumn("Risk Level", width="small"),
                         "Risk Score": st.column_config.NumberColumn("Risk Score", width="small"),
                         "Medical Reasons": st.column_config.TextColumn("Medical Reasons", width="large"),
