@@ -25,6 +25,10 @@ start_service() {
     fi
     
     echo -e "${BLUE}🏥 Starting VisitIQ Healthcare System...${NC}"
+    # Show version if available
+    if [[ -f "$INSTALL_DIR/VERSION" ]]; then
+        echo -e "${BLUE}🔖 Version:${NC} $(cat "$INSTALL_DIR/VERSION")"
+    fi
     
     cd "$INSTALL_DIR"
     source venv/bin/activate
@@ -40,6 +44,33 @@ start_service() {
         sleep 3
     fi
     
+    # Verify dependencies and give clear errors
+    echo -e "${BLUE}🔍 Verifying Python dependencies...${NC}"
+    if ! pip -q show streamlit >/dev/null 2>&1; then
+        echo -e "${YELLOW}⚠️  Dependencies missing. Installing local requirements...${NC}"
+        if [[ -f "$INSTALL_DIR/installation/local/enhanced_requirements.txt" ]]; then
+            pip install -r "$INSTALL_DIR/installation/local/enhanced_requirements.txt" >/dev/null || true
+        elif [[ -f "$INSTALL_DIR/installation/local/requirements.txt" ]]; then
+            pip install -r "$INSTALL_DIR/installation/local/requirements.txt" >/dev/null || true
+        fi
+    fi
+    # Explicit checks for optional processors
+    # Optional processors (informative only)
+    python - <<'PY'
+import importlib.util
+optional = {
+    'fitz': 'PyMuPDF',
+    'PyPDF2': 'PyPDF2',
+    'PIL': 'Pillow',
+    'pytesseract': 'pytesseract',
+    'pydicom': 'pydicom',
+    'docx': 'python-docx',
+}
+for mod, pkg in optional.items():
+    if importlib.util.find_spec(mod) is None:
+        print(f"ℹ️  Optional package missing: {pkg}. Some document types may not parse.")
+PY
+
     # Start VisitIQ in background
     nohup streamlit run app/app.py --server.port=8501 --server.headless=true > "$LOGFILE" 2>&1 &
     echo $! > "$PIDFILE"

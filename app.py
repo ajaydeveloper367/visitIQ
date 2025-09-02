@@ -441,13 +441,33 @@ def load_patients(_force_refresh: bool = False) -> pd.DataFrame:
         (base_dir.parent / 'chroma_db' / 'metadatas.json')  # root path
     ]
 
-    # Attempt to load metadata
+    # Attempt to load metadata (support docs-only entries as patients)
     for mp in meta_paths:
         if mp.exists():
             with open(mp, 'r', encoding='utf-8') as f:
                 metas = json.load(f)
-            patients = [m for m in metas if m.get('type') == 'patient']
-            return pd.DataFrame(patients)
+            pts = [m for m in metas if m.get('type') in ('patient', 'patient_doc')]
+            normalized = []
+            for m in pts:
+                pid = str(m.get('patient_id', m.get('id', '')))
+                pid_norm = pid if m.get('type') == 'patient_doc' else pid.zfill(3)
+                normalized.append({
+                    'patient_id': pid_norm,
+                    'name': m.get('name', 'Unknown Patient'),
+                    'age': int((m.get('age') or 50)),
+                    'condition': m.get('condition', 'Unknown'),
+                    'glucose_mg_dL': float(m.get('glucose_mg_dL') or 0),
+                    'bp_systolic': float(m.get('bp_systolic') or 0),
+                    'bp_diastolic': float(m.get('bp_diastolic') or 0),
+                    'heart_rate': float(m.get('heart_rate') or 0),
+                    'history': m.get('history', ''),
+                    'notes': m.get('notes', ''),
+                    # Enriched triage fields from vector metadata when present
+                    'risk_level': m.get('risk_level'),
+                    'risk_score': m.get('risk_score'),
+                    'medical_reasons': m.get('medical_reasons')
+                })
+            return pd.DataFrame(normalized)
 
     # Not present → try to build embeddings once from app/data
     try:
@@ -458,15 +478,35 @@ def load_patients(_force_refresh: bool = False) -> pd.DataFrame:
             subprocess.run([
                 sys.executable, str(script_path),
                 '--data-dir', str(base_dir / 'data'),
-                '--persist', str(base_dir / 'chroma_db')
+                '--persist', str(base_dir / 'chroma_db'),
+                '--docs-only', '--ingest-docs'
             ], check=False)
             # Try loading again
             mp = base_dir / 'chroma_db' / 'metadatas.json'
             if mp.exists():
                 with open(mp, 'r', encoding='utf-8') as f:
                     metas = json.load(f)
-                patients = [m for m in metas if m.get('type') == 'patient']
-                return pd.DataFrame(patients)
+                pts = [m for m in metas if m.get('type') in ('patient', 'patient_doc')]
+                normalized = []
+                for m in pts:
+                    pid = str(m.get('patient_id', m.get('id', '')))
+                    pid_norm = pid if m.get('type') == 'patient_doc' else pid.zfill(3)
+                    normalized.append({
+                        'patient_id': pid_norm,
+                        'name': m.get('name', 'Unknown Patient'),
+                        'age': int((m.get('age') or 50)),
+                        'condition': m.get('condition', 'Unknown'),
+                        'glucose_mg_dL': float(m.get('glucose_mg_dL') or 0),
+                        'bp_systolic': float(m.get('bp_systolic') or 0),
+                        'bp_diastolic': float(m.get('bp_diastolic') or 0),
+                        'heart_rate': float(m.get('heart_rate') or 0),
+                        'history': m.get('history', ''),
+                        'notes': m.get('notes', ''),
+                        'risk_level': m.get('risk_level'),
+                        'risk_score': m.get('risk_score'),
+                        'medical_reasons': m.get('medical_reasons')
+                    })
+                return pd.DataFrame(normalized)
     except Exception as _:
         pass
 
@@ -497,15 +537,25 @@ with col3:
 
 # ============ AI CHATBOT ASSISTANT ============
 if view == '🤖 AI Chatbot Assistant':
+    # Version badge
+    try:
+        from pathlib import Path as _Path
+        _ver_file = _Path(__file__).resolve().parent.parent / 'VERSION'
+        _version = _ver_file.read_text(encoding='utf-8').strip() if _ver_file.exists() else 'dev'
+    except Exception:
+        _version = 'dev'
+
     st.markdown(
-        """
-        <div style="background: linear-gradient(135deg, #eff6ff, #dbeafe); 
+        f"""
+        <div style=\"background: linear-gradient(135deg, #eff6ff, #dbeafe); 
                     border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem;
-                    border-left: 4px solid #3b82f6;">
-            <h2 style="color: #1e3a8a; margin: 0 0 0.5rem 0; font-family: 'Poppins', sans-serif;">
-                👋 Hello! I'm your VisitIQ Assistant
-            </h2>
-            <p style="color: #1e40af; margin: 0; font-size: 1rem;">
+                    border-left: 4px solid #3b82f6;\">
+            <div style=\"display:flex; align-items:center; justify-content:space-between;\">
+                <h2 style=\"color: #1e3a8a; margin: 0 0 0.5rem 0; font-family: 'Poppins', sans-serif;\">
+                    👋 Hello! I'm your VisitIQ Assistant
+                </h2>
+            </div>
+            <p style=\"color: #1e40af; margin: 0; font-size: 1rem;\">
                 I'm here to help you navigate healthcare scheduling with ease. Ask me anything about 
                 physicians, appointment availability, or patient prioritization - I speak human! 😊
             </p>
@@ -580,8 +630,9 @@ if view == '🤖 AI Chatbot Assistant':
             chatbot = get_chatbot_cached()
             response = chatbot.process_query(user_query)
             
-            # Add to chat history
-            st.session_state.chat_history.append((user_query, response.get('message', 'Query processed')))
+            # Add to chat history (prefer formatted text when available)
+            chat_text = response.get('formatted_response') or response.get('message', 'Query processed')
+            st.session_state.chat_history.append((user_query, chat_text))
         
         # Reset form state after processing
         st.session_state.form_submitted = False

@@ -56,12 +56,19 @@ class EnhancedPatientManager:
                 if mp.exists():
                     with open(mp, 'r', encoding='utf-8') as f:
                         metas = json.load(f)
-                    patients_meta = [m for m in metas if m.get('type') == 'patient']
+                    # Accept structured patient or patient_doc (docs-only mode)
+                    patients_meta = [m for m in metas if m.get('type') in ('patient', 'patient_doc')]
                     if patients_meta:
                         normalized: List[Dict[str, Any]] = []
                         for m in patients_meta:
+                            pid = str(m.get('patient_id', m.get('id', '')))
+                            # For docs-only, use raw patient_id (not zero-padded) to avoid confusion
+                            if m.get('type') == 'patient_doc':
+                                pid_norm = pid
+                            else:
+                                pid_norm = pid.zfill(3)
                             normalized.append({
-                                'patient_id': str(m.get('patient_id', m.get('id', ''))).zfill(3),
+                                'patient_id': pid_norm,
                                 'name': m.get('name', 'Unknown Patient'),
                                 'age': int((m.get('age') or 50)),
                                 'condition': m.get('condition', 'Unknown'),
@@ -69,9 +76,14 @@ class EnhancedPatientManager:
                                 'bp_systolic': float(m.get('bp_systolic') or 0),
                                 'bp_diastolic': float(m.get('bp_diastolic') or 0),
                                 'heart_rate': float(m.get('heart_rate') or 0),
+                                'hba1c': float(m.get('hba1c') or 0),
                                 'history': m.get('history', ''),
                                 'notes': m.get('notes', ''),
-                                'document_count': m.get('document_count', 0),
+                                # Enriched triage fields (if present from docs-only LLM normalization)
+                                'risk_level': m.get('risk_level'),
+                                'risk_score': m.get('risk_score'),
+                                'medical_reasons': m.get('medical_reasons'),
+                                'document_count': m.get('document_count', 1 if m.get('type')=='patient_doc' else m.get('document_count', 0)),
                                 'last_document_date': m.get('last_document_date'),
                                 'data_source': 'VectorDB'
                             })
@@ -354,7 +366,11 @@ def get_enhanced_patients_for_prioritization() -> List[Dict[str, Any]]:
             'data_source': patient.get('data_source', 'CSV'),
             'document_count': patient.get('document_count', 0),
             'last_document_date': patient.get('last_document_date'),
-            'enhanced_data_available': patient.get('document_count', 0) > 0
+            'enhanced_data_available': patient.get('document_count', 0) > 0,
+            # Triaged fields (from docs-only enrichment if present)
+            'risk_level': patient.get('risk_level'),
+            'risk_score': patient.get('risk_score'),
+            'medical_reasons': patient.get('medical_reasons')
         }
         
         compatible_patients.append(compatible_patient)

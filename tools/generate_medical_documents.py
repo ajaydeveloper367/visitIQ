@@ -20,6 +20,7 @@ import requests
 
 # Add src to path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
+from config import DATA_DIR, OLLAMA_URL, OLLAMA_MODEL
 
 class MedicalDocumentGenerator:
     """
@@ -28,9 +29,9 @@ class MedicalDocumentGenerator:
     """
     
     def __init__(self, 
-                 output_dir: str = "data/patient_documents",
-                 llm_base_url: str = "http://localhost:11434",
-                 llm_model: str = "llama3"):
+                 output_dir: str = os.path.join(DATA_DIR, "patient_documents"),
+                 llm_base_url: str = OLLAMA_URL,
+                 llm_model: str = OLLAMA_MODEL):
         
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -554,6 +555,20 @@ Date: {date.strftime('%m/%d/%Y %H:%M')}"""
         summary_file = patient_dir / "patient_summary.json"
         with open(summary_file, 'w') as f:
             json.dump(summary, f, indent=2)
+
+        # Write standardized profile file for downstream ingestion
+        profile = {
+            'patient_id': patient_profile['patient_id'],
+            'name': patient_profile['name'],
+            'age': patient_profile['age'],
+            'gender': patient_profile['gender'],
+            'condition': patient_profile['primary_condition'],
+            'secondary_conditions': patient_profile['secondary_conditions'],
+            'medications': patient_profile['medications']
+        }
+        profile_file = patient_dir / "profile.json"
+        with open(profile_file, 'w') as f:
+            json.dump(profile, f, indent=2)
         
         print(f"   📋 Generated {len(generated_files)} documents total")
         return summary

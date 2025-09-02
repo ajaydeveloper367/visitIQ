@@ -1,6 +1,8 @@
-# 🏥 VisitIQ - Healthcare Visit Prioritization System
+# 🏥 VisitIQ - Healthcare Visit Prioritization System (v2.0.0)
 
 **AI-powered healthcare scheduling with FHIR compliance and smart patient prioritization.**
+
+> Current version: 2.0.0
 
 ## 🚀 **Quick Install**
 

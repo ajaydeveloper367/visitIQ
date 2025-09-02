@@ -9,6 +9,7 @@ import pandas as pd
 import json
 import re
 from typing import Dict, Any, Optional, List
+from .config import OLLAMA_MODEL
 from datetime import datetime, timedelta
 import logging
 
@@ -63,12 +64,14 @@ class SmartLLMHealthcareChatbot:
                 if os.path.exists(mp):
                     with open(mp, 'r', encoding='utf-8') as f:
                         metas = json.load(f)
-                    patients_meta = [m for m in metas if m.get('type') == 'patient']
+                    patients_meta = [m for m in metas if m.get('type') in ('patient','patient_doc')]
                     if patients_meta:
                         normalized = []
                         for m in patients_meta:
+                            pid = str(m.get('patient_id', m.get('id', '')))
+                            pid_norm = pid if m.get('type') == 'patient_doc' else pid.zfill(3)
                             normalized.append({
-                                'patient_id': str(m.get('patient_id', m.get('id', ''))).zfill(3),
+                                'patient_id': pid_norm,
                                 'name': m.get('name', 'Unknown Patient'),
                                 'age': int((m.get('age') or 50)),
                                 'condition': m.get('condition', 'Unknown'),
@@ -77,7 +80,11 @@ class SmartLLMHealthcareChatbot:
                                 'bp_diastolic': float(m.get('bp_diastolic') or 0),
                                 'heart_rate': float(m.get('heart_rate') or 0),
                                 'history': m.get('history', ''),
-                                'notes': m.get('notes', '')
+                                'notes': m.get('notes', ''),
+                                # Include enriched triage fields when present in metadatas.json
+                                'risk_level': m.get('risk_level'),
+                                'risk_score': m.get('risk_score'),
+                                'medical_reasons': m.get('medical_reasons')
                             })
                         return pd.DataFrame(normalized)
         except Exception:
@@ -217,11 +224,21 @@ Provide your intelligent medical analysis now:"""
                         'BP': f"{row['bp_systolic']}/{row['bp_diastolic']}"
                     })
                 
+                # Textual summary for chat bubble (top-N)
+                top = patients_data[:10]
+                summary_lines = [
+                    f"- {p['Name']} | {p['Risk Level']} | {p['Glucose']} | BP {p['BP']}"
+                    for p in top
+                ]
+                formatted = (
+                    f"Critical patients ({len(patients_data)} total, showing {len(top)}):\n" +
+                    "\n".join(summary_lines)
+                )
                 return {
                     'status': 'success',
                     'message': f'Found {len(patients_data)} critical patients requiring immediate attention',
                     'data': patients_data,
-                    'formatted_response': f'Critical Patient Alert: {len(patients_data)} patients need urgent care',
+                    'formatted_response': formatted,
                     'query_type': 'patient_critical'
                 }
             
@@ -238,33 +255,78 @@ Provide your intelligent medical analysis now:"""
                         'Status': 'Controlled' if row['glucose_mg_dL'] < 140 else 'High'
                     })
                 
+                # Textual summary for chat bubble (top-N)
+                top = patients_data[:10]
+                summary_lines = [
+                    f"- {p['Name']} | {p['Glucose']} | {p['Status']}"
+                    for p in top
+                ]
+                formatted = (
+                    f"Diabetic patients ({len(patients_data)} total, showing {len(top)}):\n" +
+                    "\n".join(summary_lines)
+                )
                 return {
                     'status': 'success',
                     'message': f'Found {len(patients_data)} diabetic patients',
                     'data': patients_data,
-                    'formatted_response': f'Diabetic Patient Management: {len(patients_data)} patients monitored',
+                    'formatted_response': formatted,
                     'query_type': 'patient_diabetes'
                 }
             
             else:
-                # General patient list
+                # General patient list (enriched with vector DB fields when available)
                 patients_data = []
                 for _, row in df.head(20).iterrows():  # Show first 20
-                    risk_score = self._calculate_risk_score(row)
+                    # Prefer enriched risk fields when present (handle NaN)
+                    risk_score = row.get('risk_score')
+                    risk_level = row.get('risk_level')
+                    reasons = row.get('medical_reasons') if 'medical_reasons' in row else None
+                    if risk_score is None or (isinstance(risk_score, float) and pd.isna(risk_score)):
+                        risk_score = self._calculate_risk_score(row)
+                    if (risk_level is None) or (isinstance(risk_level, float) and pd.isna(risk_level)) or (isinstance(risk_level, str) and not risk_level.strip()):
+                        if risk_score >= 90:
+                            risk_level = 'Emergency'
+                        elif risk_score >= 70:
+                            risk_level = 'High'
+                        elif risk_score >= 40:
+                            risk_level = 'Medium'
+                        else:
+                            risk_level = 'Low'
+                    if isinstance(reasons, float) and pd.isna(reasons):
+                        reasons = None
+                    if isinstance(reasons, list):
+                        reasons_text = '; '.join(reasons)
+                    elif isinstance(reasons, str) and reasons.strip():
+                        reasons_text = reasons.strip()
+                    else:
+                        reasons_text = ''
                     patients_data.append({
-                        'Name': row['name'],
-                        'Age': row['age'],
-                        'Condition': row['condition'],
+                        'Patient ID': row.get('patient_id'),
+                        'Name': row.get('name'),
+                        'Age': row.get('age'),
+                        'Condition': row.get('condition'),
+                        'Risk Level': risk_level,
                         'Risk Score': risk_score,
-                        'Glucose': f"{row['glucose_mg_dL']} mg/dL",
-                        'BP': f"{row['bp_systolic']}/{row['bp_diastolic']}"
+                        'Medical Reasons': reasons_text,
+                        'Glucose': f"{row.get('glucose_mg_dL', '')} mg/dL",
+                        'BP': f"{row.get('bp_systolic', '')}/{row.get('bp_diastolic', '')}"
                     })
-                
+
+                # Textual summary for chat bubble (top-N)
+                top = patients_data[:10]
+                summary_lines = [
+                    f"- {p.get('Patient ID')} | {p.get('Name')} | {p.get('Condition')} | {p.get('Risk Level')} ({p.get('Risk Score')})"
+                    for p in top
+                ]
+                formatted = (
+                    f"Patients ({len(df)} total, showing {len(top)}):\n" +
+                    "\n".join(summary_lines)
+                )
                 return {
                     'status': 'success',
                     'message': f'Patient Database: {len(df)} total patients (showing first {len(patients_data)})',
                     'data': patients_data,
-                    'formatted_response': f'Patient Overview: {len(patients_data)} patients displayed',
+                    'formatted_response': formatted,
                     'query_type': 'patient_list'
                 }
                 
@@ -425,9 +487,29 @@ Provide your intelligent medical analysis now:"""
                 filtered = practitioners
                 
             result['data'] = [{'Name': p.name, 'Specialty': p.specialty, 'Dept': p.department} for p in filtered]
+            # Provide concise list in chat bubble
+            top = result['data'][:10]
+            lines = [f"- {p['Name']} | {p['Specialty']} ({p['Dept']})" for p in top]
+            result['formatted_response'] = (
+                f"Physicians ({len(result['data'])} total, showing {len(top)}):\n" + "\n".join(lines)
+            )
             
         elif query_type == "patient_query":
             result['data'] = self._get_patient_structured_data(query, patients_csv_path)
+            # Provide concise list in chat bubble
+            top = result['data'][:10] if isinstance(result['data'], list) else []
+            lines = [
+                f"- {p.get('Patient ID')} | {p.get('Name')} | {p.get('Condition')} | {p.get('Risk Level')} ({p.get('Risk Score')})"
+                for p in top
+            ]
+            try:
+                df = self._load_patients_df()
+                total_patients = len(df)
+            except Exception:
+                total_patients = len(result['data']) if isinstance(result['data'], list) else 0
+            result['formatted_response'] = (
+                f"Patients ({total_patients} total, showing {len(top)}):\n" + "\n".join(lines)
+            )
             
         return result
     
@@ -465,16 +547,55 @@ Provide your intelligent medical analysis now:"""
             # Build patient table
             all_patients_data: List[Dict[str, Any]] = []
             for row, pr in zip(rows, batch_results):
-                reasons = pr.get('reasons') or []
+                # Aggregate reasons from all sources and deduplicate
+                reasons_list = []
+                if pr.get('reasons'):
+                    if isinstance(pr['reasons'], list):
+                        reasons_list.extend(pr['reasons'])
+                    else:
+                        reasons_list.append(str(pr['reasons']))
+                if row.get('medical_reasons'):
+                    if isinstance(row['medical_reasons'], list):
+                        reasons_list.extend(row['medical_reasons'])
+                    else:
+                        reasons_list.append(str(row['medical_reasons']))
+                # Simple vitals-based hints if still empty
+                try:
+                    if not reasons_list:
+                        g = float(row.get('glucose_mg_dL') or 0)
+                        sys_bp = float(row.get('bp_systolic') or 0)
+                        if g >= 400:
+                            reasons_list.append('Glucose >= 400 (hyperglycemic crisis risk)')
+                        elif g >= 300:
+                            reasons_list.append('Glucose >= 300 (very high)')
+                        elif g >= 200:
+                            reasons_list.append('Glucose >= 200 (elevated)')
+                        if sys_bp >= 180:
+                            reasons_list.append('Systolic BP >= 180 (hypertensive emergency risk)')
+                        elif sys_bp >= 160:
+                            reasons_list.append('Systolic BP >= 160 (very high)')
+                except Exception:
+                    pass
+                # De-duplicate (case-insensitive)
+                seen = set()
+                merged_reasons = []
+                for r in reasons_list:
+                    key = str(r).strip().lower()
+                    if key and key not in seen:
+                        seen.add(key)
+                        merged_reasons.append(str(r).strip())
                 source = pr.get('reasoning_source') or '🧠 LLM Medical Analysis'
+                # Prefer risk fields from normalized metadata
+                risk_level = row.get('risk_level') or pr.get('priority_level')
+                risk_score = row.get('risk_score') or pr.get('score')
                 all_patients_data.append({
                     'Patient ID': row.get('patient_id'),
                     'Name': row.get('name'),
                     'Age': row.get('age'),
                     'Condition': row.get('condition'),
-                    'Risk Level': pr.get('priority_level'),
-                    'Risk Score': pr.get('score'),
-                    'Medical Reasons': ', '.join(reasons) if isinstance(reasons, list) else str(reasons),
+                    'Risk Level': risk_level,
+                    'Risk Score': risk_score,
+                    'Medical Reasons': '; '.join(merged_reasons),
                     'Glucose': f"{row.get('glucose_mg_dL', '')} mg/dL",
                     'BP': f"{row.get('bp_systolic', '')}/{row.get('bp_diastolic', '')}",
                     'History': row.get('history', 'No history'),
@@ -658,7 +779,7 @@ Provide your intelligent medical analysis now:"""
         try:
             if self.llm_client and hasattr(self.llm_client, 'chat'):
                 response = self.llm_client.chat(
-                    model="llama3",
+                    model=OLLAMA_MODEL,
                     messages=[{"role": "user", "content": prompt}],
                     stream=False,
                     options={"temperature": 0.1, "top_p": 0.9, "num_ctx": 4096}

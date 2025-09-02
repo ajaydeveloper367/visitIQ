@@ -44,14 +44,18 @@ except Exception:
 # -----------------------
 # Config
 # -----------------------
-PERSIST_DIR = os.getenv("CHROMA_DIR", "chroma_db")  # reused name for compatibility
+# Support both package and script imports
+try:
+    from .config import CHROMA_DIR as PERSIST_DIR, RAG_TOP_K, OLLAMA_URL as CFG_OLLAMA_URL, OLLAMA_MODEL as CFG_OLLAMA_MODEL
+except Exception:
+    from config import CHROMA_DIR as PERSIST_DIR, RAG_TOP_K, OLLAMA_URL as CFG_OLLAMA_URL, OLLAMA_MODEL as CFG_OLLAMA_MODEL
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 EMBEDDINGS_FILE = os.path.join(PERSIST_DIR, "embeddings.npy")
 DOCS_FILE = os.path.join(PERSIST_DIR, "docs.json")
 IDS_FILE = os.path.join(PERSIST_DIR, "ids.json")
-TOP_K = int(os.getenv("RAG_TOP_K", "3"))
-OLLAMA_BASE_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")
-OLLAMA_MODEL_NAME = os.getenv("OLLAMA_MODEL", "llama3")
+TOP_K = int(os.getenv("RAG_TOP_K", str(RAG_TOP_K)))
+OLLAMA_BASE_URL = os.getenv("OLLAMA_URL", CFG_OLLAMA_URL)
+OLLAMA_MODEL_NAME = os.getenv("OLLAMA_MODEL", CFG_OLLAMA_MODEL)
 
 # -----------------------
 # Simple rule-based fallback (same logic as before)

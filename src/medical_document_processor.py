@@ -74,9 +74,15 @@ class MedicalDocumentProcessor:
             'bp_systolic': [r'BP[:\s]*(\d+)/\d+', r'blood pressure[:\s]*(\d+)/\d+'],
             'bp_diastolic': [r'BP[:\s]*\d+/(\d+)', r'blood pressure[:\s]*\d+/(\d+)'],
             'heart_rate': [r'HR[:\s]*(\d+)', r'heart rate[:\s]*(\d+)', r'pulse[:\s]*(\d+)'],
+            'hba1c': [r'hba1c[^\d]*(\d+\.?\d*)\s*%'],
             'weight': [r'weight[:\s]*(\d+\.?\d*)\s*(?:kg|lbs)', r'wt[:\s]*(\d+\.?\d*)'],
             'height': [r'height[:\s]*(\d+\.?\d*)\s*(?:cm|ft|in)', r'ht[:\s]*(\d+\.?\d*)'],
             'temperature': [r'temp[:\s]*(\d+\.?\d*)', r'temperature[:\s]*(\d+\.?\d*)']
+        }
+        # Patient identity patterns
+        self.identity_patterns = {
+            'patient_id': [r'(?:patient id|mrn|id)[\s:#]*([A-Za-z0-9\-]+)'],
+            'patient_name': [r'(?:patient name|name)[\s:]*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)']
         }
         
         print(f"🏥 Medical Document Processor initialized")
@@ -201,28 +207,46 @@ class MedicalDocumentProcessor:
         return patient_profile
     
     def _process_pdf(self, file_path: str, doc_info: Dict) -> Dict[str, Any]:
-        """Process PDF medical documents (lab reports, clinical notes, etc.)"""
+        """Process PDF medical documents (lab reports, clinical notes, etc.)
+        - Primary: extract text via PyMuPDF
+        - Fallback: OCR each page if text is empty (image-only PDFs)
+        """
         if not PDF_AVAILABLE:
             return {'error': 'PDF processing not available'}
         
         try:
-            # Extract text using PyMuPDF (more robust)
             doc = fitz.open(file_path)
-            full_text = ""
-            
+            text_chunks: List[str] = []
             for page in doc:
-                full_text += page.get_text()
-            
+                t = page.get_text() or ""
+                if t.strip():
+                    text_chunks.append(t)
+            # OCR fallback if needed
+            if not text_chunks and OCR_AVAILABLE:
+                import io
+                for page in doc:
+                    pix = page.get_pixmap()
+                    try:
+                        img_bytes = pix.tobytes("png")
+                        image = Image.open(io.BytesIO(img_bytes))
+                        ocr_text = pytesseract.image_to_string(image)
+                        if ocr_text.strip():
+                            text_chunks.append(ocr_text)
+                    except Exception:
+                        continue
+            full_text = "\n".join(text_chunks)
+            page_count = len(doc)
             doc.close()
-            
-            # Extract medical data using patterns and LLM
+
+            # Extract medical + identity data
             extracted_values = self._extract_medical_values(full_text)
+            extracted_values.update(self._extract_patient_identity(full_text))
             
             return {
-                'text_content': full_text[:1000] + "..." if len(full_text) > 1000 else full_text,
+                'text_content': full_text[:2000] + "..." if len(full_text) > 2000 else full_text,
                 'extracted_values': extracted_values,
-                'page_count': len(doc),
-                'processing_method': 'PDF text extraction'
+                'page_count': page_count,
+                'processing_method': 'PDF text extraction' if text_chunks else 'PDF OCR extraction'
             }
             
         except Exception as e:
@@ -240,8 +264,9 @@ class MedicalDocumentProcessor:
             # Extract text using OCR
             ocr_text = pytesseract.image_to_string(image)
             
-            # Extract medical data
+            # Extract medical + identity data
             extracted_values = self._extract_medical_values(ocr_text)
+            extracted_values.update(self._extract_patient_identity(ocr_text))
             
             return {
                 'text_content': ocr_text[:1000] + "..." if len(ocr_text) > 1000 else ocr_text,
@@ -360,10 +385,63 @@ class MedicalDocumentProcessor:
                         extracted[key] = match.group(1)
                         break
         
-        # TODO: Integrate LLM for advanced medical data extraction
+        # Table-friendly fallbacks (values often appear without labels on the same line)
+        try:
+            m = re.search(r'(\d{2,3})\s*/\s*(\d{2,3})\s*mmhg', text, re.IGNORECASE)
+            if m:
+                extracted.setdefault('bp_systolic', float(m.group(1)))
+                extracted.setdefault('bp_diastolic', float(m.group(2)))
+        except Exception:
+            pass
+        try:
+            m = re.search(r'(\d{2,3})\s*bpm', text, re.IGNORECASE)
+            if m:
+                extracted.setdefault('heart_rate', float(m.group(1)))
+        except Exception:
+            pass
+        try:
+            m = re.search(r'(\d{2,3}\.?\d*)\s*[fFcC]\b', text)
+            if m:
+                extracted.setdefault('temperature', float(m.group(1)))
+        except Exception:
+            pass
+        try:
+            m = re.search(r'(\d{2,3})\s*%\s*(?:oxygen|o2|saturation)?', text, re.IGNORECASE)
+            if m:
+                extracted.setdefault('oxygen_saturation', float(m.group(1)))
+        except Exception:
+            pass
+        # TODO: Optionally integrate LLM for advanced medical data extraction
         # This would use the existing LLM to understand medical context
         
         return extracted
+
+    def _extract_patient_identity(self, text: str) -> Dict[str, Any]:
+        """Extract patient id and name if present in text."""
+        import re
+        identity: Dict[str, Any] = {}
+        # Work line-by-line to avoid capturing across newlines
+        for line in text.splitlines():
+            l = line.strip()
+            if not l:
+                continue
+            low = l.lower()
+            # Patient ID
+            m = re.search(r'^(?:patient\s*id|mrn|id)[\s:#-]*([A-Za-z0-9\-]+)\s*$', low, re.IGNORECASE)
+            if m and 'patient_id' not in identity:
+                identity['patient_id'] = m.group(1).strip()
+                continue
+            # Patient Name
+            m = re.search(r'^(?:patient\s*name|name)[\s:]*([A-Z][A-Za-z\-]+(?:\s+[A-Z][A-Za-z\-]+)+)\s*$', l, re.IGNORECASE)
+            if m and 'patient_name' not in identity:
+                identity['patient_name'] = m.group(1).strip()
+                continue
+            # Physician
+            m = re.search(r'^(?:physician|doctor)\s*[:]\s*(.*)$', l, re.IGNORECASE)
+            if m and 'physician' not in identity:
+                identity['physician'] = m.group(1).strip()
+                continue
+        return identity
     
     def _extract_from_structured_data(self, data: Dict) -> Dict[str, Any]:
         """Extract medical values from structured data (JSON, etc.)"""

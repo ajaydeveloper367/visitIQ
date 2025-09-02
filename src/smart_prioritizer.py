@@ -11,6 +11,7 @@ import numpy as np
 from .prioritizer import rag_prioritize_row, rule_based_priority_row, rag_prioritize_batch
 from .slot_manager import get_slot_manager, SlotManager, FHIRSlot, FHIRPractitioner
 from .fhir_models import SlotStatus
+from .config import OLLAMA_URL, OLLAMA_MODEL
 
 class SmartPrioritizer:
     """
@@ -101,11 +102,30 @@ class SmartPrioritizer:
         prioritized_patients = []
         for i, (patient, priority_result) in enumerate(zip(patients, priority_results)):
             # Enhanced patient record with slot-aware scoring
+            # Prefer precomputed risk from metadata when available
+            meta_level = patient.get('risk_level')
+            meta_score = patient.get('risk_score')
+            base_level = meta_level or priority_result.get('priority_level', 'Low')
+            base_score = meta_score if (meta_score is not None and meta_score != '') else priority_result.get('score', 0)
+            # Merge reasons
+            merged_reasons = []
+            pr_reasons = priority_result.get('reasons', []) or []
+            if isinstance(pr_reasons, list):
+                merged_reasons.extend([str(r) for r in pr_reasons])
+            else:
+                merged_reasons.append(str(pr_reasons))
+            if patient.get('medical_reasons'):
+                if isinstance(patient['medical_reasons'], list):
+                    merged_reasons.extend([str(r) for r in patient['medical_reasons']])
+                else:
+                    merged_reasons.append(str(patient['medical_reasons']))
+            # de-duplicate
+            seen=set(); merged_reasons=[r for r in (x.strip() for x in merged_reasons) if r and (r.lower() not in seen and not seen.add(r.lower()))]
             enhanced_patient = {
                 **patient,
-                'base_priority_level': priority_result.get('priority_level', 'Low'),
-                'base_score': priority_result.get('score', 0),
-                'base_reasons': priority_result.get('reasons', []),
+                'base_priority_level': base_level,
+                'base_score': base_score,
+                'base_reasons': merged_reasons,
                 'reasoning_source': priority_result.get('reasoning_source', '❓ Unknown'),
                 'slot_aware_score': 0,
                 'specialty_match_score': 0,
@@ -333,9 +353,9 @@ Return only a number 0-100."""
 
         try:
             response = requests.post(
-                'http://localhost:11434/api/generate',
+                f"{OLLAMA_URL}/api/generate",
                 json={
-                    'model': 'llama3',
+                    'model': OLLAMA_MODEL,
                     'prompt': prompt,
                     'stream': False,
                     'options': {'temperature': 0.1, 'num_ctx': 2048}
@@ -461,17 +481,35 @@ Return only a number 0-100."""
                     best_physician = practitioner
             
             # Enhanced patient record with auto-selected physician
+            # Prefer precomputed risk from metadata when present and merge reasons
+            meta_level = patient.get('risk_level')
+            meta_score = patient.get('risk_score')
+            base_level = meta_level or priority_result.get('priority_level', 'Low')
+            base_score = meta_score if (meta_score is not None and meta_score != '') else priority_result.get('score', 0)
+            merged_reasons = []
+            pr_reasons = priority_result.get('reasons', []) or []
+            if isinstance(pr_reasons, list):
+                merged_reasons.extend([str(r) for r in pr_reasons])
+            else:
+                merged_reasons.append(str(pr_reasons))
+            if patient.get('medical_reasons'):
+                if isinstance(patient['medical_reasons'], list):
+                    merged_reasons.extend([str(r) for r in patient['medical_reasons']])
+                else:
+                    merged_reasons.append(str(patient['medical_reasons']))
+            seen=set(); merged_reasons=[r for r in (x.strip() for x in merged_reasons) if r and (r.lower() not in seen and not seen.add(r.lower()))]
+
             enhanced_patient = {
                 **patient,
-                'base_priority_level': priority_result.get('priority_level', 'Low'),
-                'base_score': priority_result.get('score', 0),
-                'base_reasons': priority_result.get('reasons', []),
+                'base_priority_level': base_level,
+                'base_score': base_score,
+                'base_reasons': merged_reasons,
                 'reasoning_source': priority_result.get('reasoning_source', '❓ Unknown'),
                 'recommended_physician_id': best_physician.id if best_physician else None,
                 'recommended_physician_name': best_physician.name if best_physician else 'No match',
                 'recommended_department': best_physician.specialty if best_physician else 'General',
                 'specialty_match_score': best_score,
-                'final_score': priority_result.get('score', 0) + best_score,
+                'final_score': base_score + best_score,
                 'recommended_for_booking': best_score > 70  # High confidence match
             }
             
