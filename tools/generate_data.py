@@ -11,6 +11,7 @@ import sys
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
 import random
+import numpy as np
 
 # US-based names for realistic data
 FIRST_NAMES = [
@@ -329,6 +330,12 @@ class DataGenerator:
         # Create empty appointments file
         self.save_to_json([], 'appointments.json')
         
+        # Persist to vector stores (Chroma + lightweight local files)
+        try:
+            self._persist_to_vectorstores(patient_data, physician_data)
+        except Exception as e:
+            print(f"⚠️ Skipped vectorstore persistence due to error: {e}")
+
         print("\n📊 Data Generation Summary:")
         print(f"   • {len(patient_data)} patients")
         print(f"   • {len(physician_data)} physicians")
@@ -338,6 +345,152 @@ class DataGenerator:
         
         print(f"\n💾 Files saved to: {os.path.abspath(self.data_dir)}/")
         print("🎉 Healthcare data generation complete!")
+
+    def _persist_to_vectorstores(self, patient_data, physician_data):
+        """Create/update local vectorstore files and ChromaDB collections."""
+        # 1) Build lightweight local vectorstore files from patients.csv (embeddings.npy/docs.json/ids.json)
+        try:
+            from src.prioritizer import build_vectorstore_from_csv, PERSIST_DIR, EMBEDDING_MODEL
+        except Exception:
+            # Fallback env/defaults to keep working even if import path differs
+            import os as _os
+            PERSIST_DIR = _os.getenv("CHROMA_DIR", "chroma_db")
+            EMBEDDING_MODEL = _os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+            build_vectorstore_from_csv = None
+
+        persist_dir = os.getenv("CHROMA_DIR", "chroma_db")
+        os.makedirs(persist_dir, exist_ok=True)
+
+        patients_csv_path = os.path.join(self.data_dir, 'patients.csv')
+        docs_texts = None
+        doc_ids = None
+        doc_embs = None
+
+        # Build or read local vectorstore artifacts
+        try:
+            if build_vectorstore_from_csv is not None:
+                build_vectorstore_from_csv(patients_csv_path, persist_directory=persist_dir)
+            # Load back artifacts
+            docs_path = os.path.join(persist_dir, 'docs.json')
+            ids_path = os.path.join(persist_dir, 'ids.json')
+            emb_path = os.path.join(persist_dir, 'embeddings.npy')
+            if os.path.exists(docs_path) and os.path.exists(ids_path) and os.path.exists(emb_path):
+                with open(docs_path, 'r', encoding='utf-8') as f:
+                    docs_texts = json.load(f)
+                with open(ids_path, 'r', encoding='utf-8') as f:
+                    doc_ids = json.load(f)
+                doc_embs = np.load(emb_path)
+        except Exception as e:
+            print(f"⚠️ Local vectorstore build/load failed: {e}")
+
+        # 2) Upsert into ChromaDB collections
+        try:
+            import chromadb
+            from chromadb.config import Settings as _ChromaSettings
+            from sentence_transformers import SentenceTransformer
+
+            client = chromadb.Client(_ChromaSettings(chroma_db_impl="duckdb+parquet", persist_directory=persist_dir))
+
+            # Helper to recreate or clear a collection
+            def get_clean_collection(name: str):
+                try:
+                    coll = client.get_collection(name)
+                    try:
+                        existing = coll.get()
+                        ids_to_delete = existing.get('ids') or []
+                        if ids_to_delete:
+                            coll.delete(ids=ids_to_delete)
+                    except Exception:
+                        pass
+                    return coll
+                except Exception:
+                    try:
+                        client.delete_collection(name)
+                    except Exception:
+                        pass
+                    return client.create_collection(name)
+
+            # a) General knowledge collection used by RAG queries
+            if docs_texts is not None and doc_ids is not None and doc_embs is not None:
+                coll_docs = get_clean_collection('visitiq_docs')
+                # Ensure embeddings shape is list of lists
+                embeddings_list = doc_embs.tolist() if not isinstance(doc_embs, list) else doc_embs
+                coll_docs.add(ids=[str(i) for i in doc_ids], documents=docs_texts, embeddings=embeddings_list)
+                print(f"✅ ChromaDB: Upserted {len(docs_texts)} docs into 'visitiq_docs'")
+            else:
+                print("ℹ️ Skipping 'visitiq_docs' upsert (no local docs/embeddings available)")
+
+            # b) Patients collection for listing (with helpful metadata)
+            try:
+                coll_patients = get_clean_collection('patients')
+                # Reuse patient docs/embeddings if available; otherwise compute lightweight embeddings
+                if docs_texts is not None and doc_embs is not None and doc_ids is not None:
+                    metadatas = []
+                    for p in patient_data:
+                        metadatas.append({
+                            'patient_id': str(p.get('patient_id')),
+                            'patient_name': p.get('name'),
+                            'condition': p.get('condition')
+                        })
+                    coll_patients.add(
+                        ids=[f"patient-{pid}" for pid in doc_ids],
+                        documents=docs_texts,
+                        embeddings=doc_embs.tolist() if not isinstance(doc_embs, list) else doc_embs,
+                        metadatas=metadatas
+                    )
+                else:
+                    # Compute quick embeddings for minimal viability
+                    model = SentenceTransformer(os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2"))
+                    docs_texts = [
+                        f"Patient ID: {p.get('patient_id')}. Name: {p.get('name')}. Age: {p.get('age')}. Condition: {p.get('condition')}" 
+                        for p in patient_data
+                    ]
+                    embs = model.encode(docs_texts, show_progress_bar=False)
+                    coll_patients.add(
+                        ids=[f"patient-{p.get('patient_id')}" for p in patient_data],
+                        documents=docs_texts,
+                        embeddings=embs.tolist(),
+                        metadatas=[{
+                            'patient_id': str(p.get('patient_id')),
+                            'patient_name': p.get('name'),
+                            'condition': p.get('condition')
+                        } for p in patient_data]
+                    )
+                print(f"✅ ChromaDB: Upserted {len(patient_data)} patients into 'patients'")
+            except Exception as e:
+                print(f"⚠️ Patients collection upsert failed: {e}")
+
+            # c) Physicians collection with metadata
+            try:
+                coll_phys = get_clean_collection('physicians')
+                model = None
+                try:
+                    model = SentenceTransformer(os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2"))
+                except Exception:
+                    model = None
+                phys_docs = [
+                    f"{p.get('name')} - {p.get('specialty')} ({p.get('department')})"
+                    for p in physician_data
+                ]
+                phys_ids = [p.get('id') for p in physician_data]
+                phys_metas = [
+                    {
+                        'name': p.get('name'),
+                        'specialty': p.get('specialty'),
+                        'department': p.get('department')
+                    } for p in physician_data
+                ]
+                if model is not None:
+                    phys_embs = model.encode(phys_docs, show_progress_bar=False)
+                    coll_phys.add(ids=phys_ids, documents=phys_docs, embeddings=phys_embs.tolist(), metadatas=phys_metas)
+                else:
+                    coll_phys.add(ids=phys_ids, documents=phys_docs, metadatas=phys_metas)
+                print(f"✅ ChromaDB: Upserted {len(physician_data)} physicians into 'physicians'")
+            except Exception as e:
+                print(f"⚠️ Physicians collection upsert failed: {e}")
+
+        except Exception as e:
+            print(f"⚠️ ChromaDB persistence skipped: {e}")
 
 def main():
     """Main function with CLI interface"""

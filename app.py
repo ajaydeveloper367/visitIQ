@@ -537,10 +537,11 @@ if view == '🤖 AI Chatbot Assistant':
             # Process the query
             chatbot = get_chatbot_cached()
             patients_csv_path = st.session_state.get('patients_csv_path', 'data/patients.csv')
-            response = chatbot.process_query(user_query, patients_csv_path)
+            response = chatbot.process_query(user_query)
             
-            # Add to chat history
-            st.session_state.chat_history.append((user_query, response.get('message', 'Query processed')))
+            # Add to chat history using detailed LLM response when available
+            bot_text = response.get('formatted_response') or response.get('message', 'Query processed')
+            st.session_state.chat_history.append((user_query, bot_text))
         
         # Reset form state after processing
         st.session_state.form_submitted = False
@@ -578,6 +579,17 @@ if view == '🤖 AI Chatbot Assistant':
                             use_container_width=True,
                             height=dynamic_height,
                             disabled=True,  # Read-only
+                            hide_index=True
+                        )
+                    elif 'Patient' in response['data'][0]:
+                        # Available patients (vector/KB) list
+                        df = pd.DataFrame(response['data'])
+                        dynamic_height = min(len(df) * 35 + 50, 400)
+                        st.data_editor(
+                            df,
+                            use_container_width=True,
+                            height=dynamic_height,
+                            disabled=True,
                             hide_index=True
                         )
                     elif 'Patient ID' in response['data'][0] and 'Risk Level' in response['data'][0]:
@@ -712,7 +724,7 @@ if view == '🤖 AI Chatbot Assistant':
         
         chatbot = get_chatbot_cached()
         patients_csv_path = st.session_state.get('patients_csv_path', 'data/patients.csv')
-        response = chatbot.process_query('list all physicians', patients_csv_path)
+        response = chatbot.process_query('list all physicians')
         if response.get('data'):
             df = pd.DataFrame(response['data'])
             # Dynamic height based on data size (35px per row + 50px header)
@@ -741,7 +753,7 @@ if view == '🤖 AI Chatbot Assistant':
         
         chatbot = get_chatbot_cached()
         patients_csv_path = st.session_state.get('patients_csv_path', 'data/patients.csv')
-        response = chatbot.process_query('available slots today', patients_csv_path)
+        response = chatbot.process_query('available slots today')
         if response.get('data'):
             df = pd.DataFrame(response['data'])
             # Dynamic height based on data size (35px per row + 50px header)
@@ -769,7 +781,7 @@ if view == '🤖 AI Chatbot Assistant':
             try:
                 chatbot = get_chatbot_cached()
                 patients_csv_path = st.session_state.get('patients_csv_path', 'data/patients.csv')
-                response = chatbot.process_query('prioritize patients', patients_csv_path)
+                response = chatbot.process_query('prioritize patients')
                 
                 if response.get('status') == 'success' and response.get('data'):
                     st.success(f"✅ {response.get('message', 'Prioritization completed')}")

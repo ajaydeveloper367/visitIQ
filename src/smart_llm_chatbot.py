@@ -5,7 +5,6 @@ Smart LLM Healthcare Chatbot - Data-Focused Approach
 - Focused prompts for reliable responses
 """
 
-import pandas as pd
 import json
 import re
 from typing import Dict, Any, Optional, List
@@ -21,7 +20,7 @@ class SmartLLMHealthcareChatbot:
         self.slot_manager = slot_manager
         self.llm_client = llm_client
     
-    def process_query(self, query: str, patients_csv_path: str = 'data/patients.csv') -> Dict[str, Any]:
+    def process_query(self, query: str) -> Dict[str, Any]:
         """Process query with focused LLM approach"""
         query = query.strip()
         
@@ -35,13 +34,168 @@ class SmartLLMHealthcareChatbot:
             return self._get_greeting()
         
         # Smart query categorization and focused LLM processing
-        return self._process_with_focused_llm(query, patients_csv_path)
+        return self._process_with_focused_llm(query)
+
+    def _normalize_text(self, text: str) -> str:
+        """Lowercase and remove non-letters for robust matching."""
+        return re.sub(r'[^a-z]', '', text.lower())
+
+    def _detect_specialty_from_query(self, query_lower: str) -> Optional[str]:
+        """Detect canonical specialty from the query (handles variants like 'ortho pedic')."""
+        qn = self._normalize_text(query_lower)
+        # Common specialties and aliases
+        specialties = [
+            ("endocrinology", ["endocrinology", "endocrinologist", "endocrine"]),
+            ("cardiology", ["cardiology", "cardiologist", "cardiac"]),
+            ("orthopedic", [
+                "orthopedic", "orthopaedic", "orthopedics", "orthopaedics", "ortho"
+            ]),
+            ("neurology", ["neurology", "neurologist", "neuro"]),
+            ("nephrology", ["nephrology", "nephrologist", "nephro"]),
+            ("dermatology", ["dermatology", "dermatologist", "derma"]),
+            ("gastroenterology", ["gastroenterology", "gastroenterologist", "gastro"]),
+            ("pediatrics", ["pediatrics", "pediatrician", "paediatrics", "paediatrician"]),
+            ("familymedicine", ["familymedicine", "family", "primarycare"]),
+            ("internalmedicine", ["internalmedicine", "internal"]),
+        ]
+        for canonical, aliases in specialties:
+            for alias in aliases:
+                if self._normalize_text(alias) in qn:
+                    return canonical
+        # Generic fallbacks for *ology
+        if "ology" in qn:
+            return None
+        # Heuristic: detect 'orthop' root
+        if "orthop" in qn:
+            return "orthopedic"
+        return None
+
+    def _detect_specialties_from_query(self, query: str) -> List[str]:
+        """Detect one or more specialties from the query using aliases and live data.
+        Returns canonical strings suitable for matching against practitioner.specialty.
+        """
+        qn = self._normalize_text(query)
+        ql = query.lower()
+        # Tokenize on letters for boundary-aware matching (prevents 'ent' in 'patients')
+        q_tokens = set(re.findall(r'[a-z]+', ql))
+        # Static alias map (broad coverage)
+        alias_map = {
+            'cardiology': ['cardiology', 'cardiologist', 'cardiac', 'cardio'],
+            'endocrinology': ['endocrinology', 'endocrinologist', 'endocrine', 'endo'],
+            'orthopedic': ['orthopedic', 'orthopaedic', 'orthopedics', 'orthopaedics', 'ortho', 'orthop'],
+            'neurology': ['neurology', 'neurologist', 'neuro'],
+            'nephrology': ['nephrology', 'nephrologist', 'nephro'],
+            'dermatology': ['dermatology', 'dermatologist', 'derma', 'skin'],
+            'gastroenterology': ['gastroenterology', 'gastroenterologist', 'gastro', 'gi'],
+            'pediatrics': ['pediatrics', 'pediatrician', 'paediatrics', 'paediatrician', 'peds'],
+            'family medicine': ['familymedicine', 'family', 'primarycare', 'fm'],
+            'internal medicine': ['internalmedicine', 'internal', 'im'],
+            'otolaryngology': ['otolaryngology', 'ent'],
+            'psychiatry': ['psychiatry', 'psychiatrist', 'psych'],
+            'pulmonology': ['pulmonology', 'pulmonary', 'pulmo', 'respiratory'],
+            'rheumatology': ['rheumatology', 'rheumatologist', 'rheum'],
+            'hematology': ['hematology', 'heme'],
+            'oncology': ['oncology', 'oncologist', 'onco', 'cancer'],
+            'urology': ['urology', 'urologist', 'uro'],
+            'ophthalmology': ['ophthalmology', 'ophthalmologist', 'optho', 'eye'],
+            'obstetrics and gynecology': ['obgyn', 'ob/gyn', 'obstetrics', 'gynecology', 'gynecologist'],
+            'allergy and immunology': ['allergy', 'immunology', 'allergist', 'immunologist'],
+            'geriatrics': ['geriatrics', 'geriatric'],
+            'infectious disease': ['infectiousdisease', 'id', 'infection'],
+            'pain medicine': ['pain', 'painmedicine'],
+            'sports medicine': ['sports', 'sportsmedicine'],
+            'emergency medicine': ['emergency', 'er', 'ed', 'emergencymedicine'],
+        }
+        detected: List[str] = []
+        # Alias matching with token awareness and safe substring fallback for longer aliases
+        for canonical, aliases in alias_map.items():
+            for alias in aliases:
+                alias_tokens = re.findall(r'[a-z]+', alias.lower())
+                if alias_tokens:
+                    if len(alias_tokens) == 1:
+                        if alias_tokens[0] in q_tokens:
+                            detected.append(canonical)
+                            break
+                    else:
+                        if all(tok in q_tokens for tok in alias_tokens):
+                            detected.append(canonical)
+                            break
+                # Safe normalized substring fallback only for aliases length >=4
+                norm_alias = self._normalize_text(alias)
+                if len(norm_alias) >= 4 and norm_alias in qn:
+                    detected.append(canonical)
+                    break
+        # Dynamic matching against live practitioner specialties
+        try:
+            practitioners = self.slot_manager.get_practitioners()
+            for p in practitioners:
+                spec = getattr(p, 'specialty', '')
+                if not spec:
+                    continue
+                spec_norm = self._normalize_text(spec)
+                # token-wise match: if any token of specialty appears in query
+                tokens = [t for t in re.split(r'[^a-z]+', spec_norm) if t]
+                if any(t and t in qn for t in tokens):
+                    if spec.lower() not in detected:
+                        detected.append(spec.lower())
+        except Exception:
+            pass
+        # Deduplicate while preserving order
+        result: List[str] = []
+        seen = set()
+        for s in detected:
+            if s not in seen:
+                seen.add(s)
+                result.append(s)
+        return result
+
+    def _detect_requested_risk_levels(self, query: str) -> List[str]:
+        """Detect requested patient risk levels from query (robust to typos).
+        Returns a list of risk levels to include among: 'Emergency','High','Medium','Low'.
+        Empty list means no explicit filter requested.
+        """
+        ql = query.lower()
+        qn = self._normalize_text(query)
+        requested: List[str] = []
+        # Emergency (handles 'emergency', 'emergnecy', 'emerg', 'urgent')
+        if ('emerg' in qn) or ('urgent' in ql):
+            requested.append('Emergency')
+        # Critical → Emergency + High
+        if 'critic' in qn:  # matches 'critical'
+            if 'Emergency' not in requested:
+                requested.append('Emergency')
+            requested.append('High')
+        # High risk
+        if ('highrisk' in qn) or (('high' in ql) and ('risk' in ql)):
+            requested.append('High')
+        # Medium risk
+        if 'medium' in ql:
+            requested.append('Medium')
+        # Low risk
+        if 'low' in ql:
+            requested.append('Low')
+        # Deduplicate preserving order
+        seen = set()
+        ordered = []
+        for r in requested:
+            if r not in seen:
+                seen.add(r)
+                ordered.append(r)
+        return ordered
+
+    def _extract_simple_date(self, query: str) -> Optional[datetime.date]:
+        """Extract a simple date reference from query. Supports 'today'."""
+        ql = query.lower()
+        if 'today' in ql:
+            from datetime import date as _date
+            return _date.today()
+        return None
     
-    def _process_with_focused_llm(self, query: str, patients_csv_path: str) -> Dict[str, Any]:
+    def _process_with_focused_llm(self, query: str) -> Dict[str, Any]:
         """Process queries with LLM intelligence + fast data access"""
         try:
             # Get relevant data fast
-            query_type, relevant_data = self._get_relevant_data(query, patients_csv_path)
+            query_type, relevant_data = self._get_relevant_data(query)
             
             # Retrieve knowledge snippets from local vector DB (RAG)
             rag_snippets = self._retrieve_similar_docs(query, k=4)
@@ -100,13 +254,13 @@ Provide your intelligent medical analysis now:"""
                         result = json.loads(json_text)
                         
                         # Add structured data for app.py display
-                        result = self._add_structured_data(result, query, query_type, patients_csv_path)
+                        result = self._add_structured_data(result, query, query_type)
                         return result
                 except json.JSONDecodeError:
                     pass
             
             # Fallback to intelligent parsing
-            return self._intelligent_fallback(query, query_type, relevant_data, patients_csv_path)
+            return self._intelligent_fallback(query, query_type, relevant_data)
                 
         except Exception as e:
             logger.error(f"Smart processing error: {str(e)}")
@@ -118,35 +272,78 @@ Provide your intelligent medical analysis now:"""
 
     def _retrieve_similar_docs(self, query_text: str, k: int = 3) -> List[str]:
         """Query local vector DB under chroma_db/ and return top-k doc texts."""
+        # Strategy:
+        # 1) Try persisted ChromaDB store (duckdb+parquet) using query_embeddings
+        # 2) Fallback to lightweight numpy+sklearn index over docs.json/embeddings.npy
+        # 3) If both unavailable, return []
         try:
             import os
-            import json as _json
-            import numpy as _np
-            from sklearn.neighbors import NearestNeighbors as _NN
+            from typing import Optional
+            # SentenceTransformer for query embeddings
             try:
                 from sentence_transformers import SentenceTransformer as _ST
             except Exception:
-                return []
+                _ST = None  # Will trigger fallback below
 
-            base_dir = os.getenv('CHROMA_DIR', 'chroma_db')
-            docs_path = os.path.join(base_dir, 'docs.json')
-            emb_path = os.path.join(base_dir, 'embeddings.npy')
-            if not (os.path.exists(docs_path) and os.path.exists(emb_path)):
-                return []
+            # Attempt ChromaDB first if available
+            try:
+                import chromadb
+                from chromadb.config import Settings as _ChromaSettings
+                if _ST is not None:
+                    base_dir = os.getenv('CHROMA_DIR', 'chroma_db')
+                    client = chromadb.Client(_ChromaSettings(chroma_db_impl="duckdb+parquet", persist_directory=base_dir))
 
-            with open(docs_path, 'r') as f:
-                docs = _json.load(f)
-            emb = _np.load(emb_path)
-            if not isinstance(docs, list) or emb is None or len(docs) == 0:
-                return []
+                    # Pick collection: env override -> named common -> first available
+                    collection_name: Optional[str] = os.getenv('VISITIQ_CHROMA_COLLECTION')
+                    if collection_name is None:
+                        # Prefer commonly used names if present
+                        available = [c.name for c in client.list_collections()]
+                        preferred = ['visitiq_docs', 'medical_knowledge', 'knowledge_base']
+                        found = next((n for n in preferred if n in available), None)
+                        collection_name = found or (available[0] if available else None)
 
-            model = _ST('all-MiniLM-L6-v2')
-            q_emb = model.encode([query_text], show_progress_bar=False)
-            nn = _NN(n_neighbors=min(k, len(docs)), metric='cosine')
-            nn.fit(emb)
-            _, idxs = nn.kneighbors(q_emb, return_distance=True)
-            idxs = idxs[0].tolist()
-            return [docs[i] for i in idxs]
+                    if collection_name:
+                        coll = client.get_collection(collection_name)
+                        # Build embedding for the query and ask Chroma to return similar docs
+                        model = _ST('all-MiniLM-L6-v2')
+                        q_emb = model.encode([query_text], show_progress_bar=False)
+                        results = coll.query(query_embeddings=q_emb, n_results=max(1, k))
+                        docs = results.get('documents') or []
+                        if isinstance(docs, list) and len(docs) > 0:
+                            return [d for d in docs[0] if isinstance(d, str)]
+            except Exception:
+                # If Chroma path fails, continue to numpy fallback
+                pass
+
+            # Fallback: numpy + sklearn over local files
+            try:
+                import json as _json
+                import numpy as _np
+                from sklearn.neighbors import NearestNeighbors as _NN
+
+                base_dir = os.getenv('CHROMA_DIR', 'chroma_db')
+                docs_path = os.path.join(base_dir, 'docs.json')
+                emb_path = os.path.join(base_dir, 'embeddings.npy')
+                if not (os.path.exists(docs_path) and os.path.exists(emb_path)):
+                    return []
+
+                with open(docs_path, 'r') as f:
+                    docs = _json.load(f)
+                emb = _np.load(emb_path)
+                if not isinstance(docs, list) or emb is None or len(docs) == 0:
+                    return []
+
+                if _ST is None:
+                    return []
+                model = _ST('all-MiniLM-L6-v2')
+                q_emb = model.encode([query_text], show_progress_bar=False)
+                nn = _NN(n_neighbors=min(k, len(docs)), metric='cosine')
+                nn.fit(emb)
+                _, idxs = nn.kneighbors(q_emb, return_distance=True)
+                idxs = idxs[0].tolist()
+                return [docs[i] for i in idxs]
+            except Exception:
+                return []
         except Exception:
             return []
     
@@ -183,89 +380,16 @@ Provide your intelligent medical analysis now:"""
             'query_type': 'physician_query'
         }
     
-    def _parse_patient_data(self, relevant_data: str, query: str, patients_csv_path: str) -> Dict[str, Any]:
-        """FAST patient data parsing - structured response"""
-        try:
-            df = pd.read_csv(patients_csv_path)
-            query_lower = query.lower()
-            
-            # Filter based on query
-            if 'critical' in query_lower:
-                # Filter critical patients (glucose > 200 or bp > 140)
-                critical_df = df[
-                    (df['glucose_mg_dL'] > 200) | 
-                    (df['bp_systolic'] > 140) | 
-                    (df['condition'].str.contains('Critical', case=False, na=False))
-                ]
-                patients_data = []
-                for _, row in critical_df.iterrows():
-                    risk_level = 'CRITICAL' if row['glucose_mg_dL'] > 250 or row['bp_systolic'] > 160 else 'HIGH'
-                    patients_data.append({
-                        'Name': row['name'],
-                        'Age': row['age'],
-                        'Condition': row['condition'],
-                        'Risk Level': risk_level,
-                        'Glucose': f"{row['glucose_mg_dL']} mg/dL",
-                        'BP': f"{row['bp_systolic']}/{row['bp_diastolic']}"
-                    })
-                
-                return {
-                    'status': 'success',
-                    'message': f'Found {len(patients_data)} critical patients requiring immediate attention',
-                    'data': patients_data,
-                    'formatted_response': f'Critical Patient Alert: {len(patients_data)} patients need urgent care',
-                    'query_type': 'patient_critical'
-                }
-            
-            elif any(word in query_lower for word in ['diabetes', 'sugar', 'diabetic']):
-                # Filter diabetic patients
-                diabetic_df = df[df['condition'].str.contains('Diabetes', case=False, na=False)]
-                patients_data = []
-                for _, row in diabetic_df.iterrows():
-                    patients_data.append({
-                        'Name': row['name'],
-                        'Age': row['age'],
-                        'Condition': row['condition'],
-                        'Glucose': f"{row['glucose_mg_dL']} mg/dL",
-                        'Status': 'Controlled' if row['glucose_mg_dL'] < 140 else 'High'
-                    })
-                
-                return {
-                    'status': 'success',
-                    'message': f'Found {len(patients_data)} diabetic patients',
-                    'data': patients_data,
-                    'formatted_response': f'Diabetic Patient Management: {len(patients_data)} patients monitored',
-                    'query_type': 'patient_diabetes'
-                }
-            
-            else:
-                # General patient list
-                patients_data = []
-                for _, row in df.head(20).iterrows():  # Show first 20
-                    risk_score = self._calculate_risk_score(row)
-                    patients_data.append({
-                        'Name': row['name'],
-                        'Age': row['age'],
-                        'Condition': row['condition'],
-                        'Risk Score': risk_score,
-                        'Glucose': f"{row['glucose_mg_dL']} mg/dL",
-                        'BP': f"{row['bp_systolic']}/{row['bp_diastolic']}"
-                    })
-                
-                return {
-                    'status': 'success',
-                    'message': f'Patient Database: {len(df)} total patients (showing first {len(patients_data)})',
-                    'data': patients_data,
-                    'formatted_response': f'Patient Overview: {len(patients_data)} patients displayed',
-                    'query_type': 'patient_list'
-                }
-                
-        except Exception as e:
-            return {
-                'status': 'error',
-                'message': f'Patient data error: {str(e)}',
-                'formatted_response': 'Unable to load patient data. Please check data files.'
-            }
+    def _parse_patient_data(self, relevant_data: str, query: str) -> Dict[str, Any]:
+        """Vector-only: return knowledge snippets as formatted_response, no CSV usage."""
+        snippets = self._retrieve_similar_docs(query, k=10)
+        return {
+            'status': 'success',
+            'message': 'Patient query processed using vector knowledge only',
+            'data': [],
+            'formatted_response': "\n---\n".join(snippets) if snippets else 'No relevant knowledge snippets found.',
+            'query_type': 'patient_query'
+        }
     
     def _parse_scheduling_data(self, relevant_data: str, query: str) -> Dict[str, Any]:
         """FAST scheduling data parsing"""
@@ -353,89 +477,218 @@ Provide your intelligent medical analysis now:"""
             
         return min(score, 100)
     
-    def _add_structured_data(self, result: Dict[str, Any], query: str, query_type: str, patients_csv_path: str) -> Dict[str, Any]:
+    def _add_structured_data(self, result: Dict[str, Any], query: str, query_type: str) -> Dict[str, Any]:
         """Add structured data based on query type for app.py display"""
         query_lower = query.lower()
         
         if query_type == "physician_query":
-            practitioners = self.slot_manager.get_practitioners()
-            
-            # Filter based on specific query
-            if any(term in query_lower for term in ['endocrinologist', 'endocrinology']):
-                filtered = [p for p in practitioners if 'endocrinology' in p.specialty.lower()]
-            elif any(term in query_lower for term in ['cardiologist', 'cardiology']):
-                filtered = [p for p in practitioners if 'cardiology' in p.specialty.lower()]
-            else:
-                filtered = practitioners
-                
-            result['data'] = [{'Name': p.name, 'Specialty': p.specialty, 'Dept': p.department} for p in filtered]
+            # Vector-only physician listing
+            detected_list = self._detect_specialties_from_query(query)
+            vector_docs = self._list_physicians_from_vector(detected_list)
+            result['data'] = vector_docs
+            label = ", ".join(detected_list) if detected_list else "physicians"
+            result['formatted_response'] = f"Found {len(vector_docs)} {label} in knowledge base."
             
         elif query_type == "patient_query":
-            result['data'] = self._get_patient_structured_data(query, patients_csv_path)
+            # If user asks for available/scheduled patients:
+            ql = query.lower()
+            if any(k in ql for k in [
+                'available patients', 'available patient', 'patients available', 'available ptients',
+                'scheduled patients', 'patients scheduled', 'patients today', 'today'
+            ]):
+                try:
+                    target_date = self._extract_simple_date(query)
+                    # If NOT today-specific, list ALL patients from vector DB (per requirement)
+                    if not target_date and ('available patients' in ql or 'available patient' in ql or 'patients available' in ql):
+                        patients_kb = self._list_patients_from_vector()
+                        result['data'] = patients_kb
+                        result['formatted_response'] = f"Found {len(patients_kb)} patients in the system."
+                        result['message'] = result['formatted_response']
+                        result['status'] = 'success'
+                        return result
+                    from .fhir_models import AppointmentStatus as _ApptStatus
+                    appts = self.slot_manager.get_appointments(target_date=target_date)
+                    # Consider only booked appointments
+                    appts = [a for a in appts if getattr(a, 'status', None) == _ApptStatus.BOOKED]
+                    rows: List[Dict[str, Any]] = []
+                    for a in appts:
+                        rows.append({
+                            'Time': a.start.strftime('%Y-%m-%d %H:%M'),
+                            'Patient': a.patient_name,
+                            'Practitioner': a.practitioner_name,
+                            'Reason': a.reason_code.replace('-', ' ').title() if isinstance(a.reason_code, str) else '',
+                            'Status': str(a.status.name if hasattr(a.status, 'name') else a.status)
+                        })
+                    # If no scheduled patients found, show all patients from vector DB as fallback
+                    if not rows:
+                        patients_kb = self._list_patients_from_vector()
+                        result['data'] = patients_kb
+                        if target_date:
+                            result['formatted_response'] = f"No patients scheduled today. Showing {len(patients_kb)} patients from knowledge base."
+                        else:
+                            result['formatted_response'] = f"No patients scheduled in the system. Showing {len(patients_kb)} patients from knowledge base."
+                        result['message'] = result['formatted_response']
+                        result['status'] = 'success'
+                        return result
+                    # Otherwise return scheduled rows
+                    result['data'] = rows
+                    # Always override with a clear, non-LLM summary and return immediately
+                    if target_date:
+                        result['formatted_response'] = f"Found {len(rows)} patients scheduled today."
+                    else:
+                        result['formatted_response'] = f"Found {len(rows)} patients scheduled in the system."
+                    result['message'] = result['formatted_response']
+                    result['status'] = 'success'
+                    return result
+                except Exception:
+                    result['data'] = []
+                    result['formatted_response'] = "No patients found."
+                    result['message'] = result['formatted_response']
+                    result['status'] = 'success'
+                    return result
+            else:
+                # Respect vector-only directive for other patient queries
+                result['data'] = []
             
+        elif query_type == "scheduling_query":
+            # Vector-only physician list when user mentions doctors in scheduling context
+            if any(w in query_lower for w in ['doctor', 'physician', 'specialist']):
+                detected_list = self._detect_specialties_from_query(query)
+                vector_docs = self._list_physicians_from_vector(detected_list)
+                result['data'] = vector_docs
+                result['formatted_response'] = f"Found {len(vector_docs)} physicians for scheduling context."
+        
         return result
-    
-    def _get_patient_structured_data(self, query: str, patients_csv_path: str) -> List[Dict[str, Any]]:
-        """Get structured patient data with OPTIMIZED batch medical reasoning"""
+
+    def _list_physicians_from_vector(self, detected_specialties: List[str]) -> List[Dict[str, Any]]:
+        """Try listing physicians from a Chroma collection or docs.json when slot data is empty.
+        Expected collection name from env VISITIQ_PHYSICIANS_COLLECTION or fallbacks.
+        Returns a list of dicts with keys: Name, Specialty, Dept when possible.
+        """
         try:
-            df = pd.read_csv(patients_csv_path)
-            query_lower = query.lower()
-            
-            # 🎯 CORRECT MEDICAL PRIORITIZATION: Process ALL patients, then get top priority ones
-            from .prioritizer import rule_based_priority_row
-            
-            print(f"🎯 Chatbot using CORRECT medical prioritization for ALL {len(df)} patients")
-            
-            # Step 1: Process ALL patients for proper prioritization
-            all_patients_data = []
-            for _, row in df.iterrows():
-                priority_result = rule_based_priority_row(row.to_dict())
-                
-                patient_record = {
-                    'Patient ID': row['patient_id'],
-                    'Name': row['name'],
-                    'Age': row['age'],
-                    'Condition': row['condition'],
-                    'Risk Level': priority_result['priority_level'],
-                    'Risk Score': priority_result['score'],
-                    'Medical Reasons': ', '.join(priority_result['reasons']) if priority_result['reasons'] else 'Normal parameters',
-                    'Glucose': f"{row['glucose_mg_dL']} mg/dL",
-                    'BP': f"{row['bp_systolic']}/{row['bp_diastolic']}",
-                    'History': row.get('history', 'No history'),
-                    'Reasoning Source': "🧠 LLM Medical Analysis"  # MOVED TO LAST POSITION
-                }
-                all_patients_data.append(patient_record)
-            
-            # Step 2: SORT BY MEDICAL PRIORITY - Emergency patients first!
-            priority_order = {'Emergency': 4, 'High': 3, 'Medium': 2, 'Low': 1}
-            all_patients_data.sort(
-                key=lambda x: (
-                    priority_order.get(x['Risk Level'], 0),  # Medical priority first
-                    -x['Risk Score']  # Then by risk score (descending)
-                ), 
-                reverse=True
-            )
-            
-            # Step 3: Apply query filtering AFTER proper sorting
-            patients_data = []
-            for patient_record in all_patients_data:
-                # Filter based on query
-                if 'critical' in query_lower and patient_record['Risk Level'] in ['Emergency', 'High']:
-                    patients_data.append(patient_record)
-                elif 'diabetic' in query_lower and 'diabetes' in patient_record['Condition'].lower():
-                    patients_data.append(patient_record)
-                elif not any(term in query_lower for term in ['critical', 'diabetic']):
-                    patients_data.append(patient_record)
-                    
-            # Step 4: Return ALL patients AFTER proper prioritization and filtering
-            # Let the UI handle scrolling with the sidebar - show all patients!
-            return patients_data  # No limit - show all patients with proper prioritization!
-            
-        except Exception as e:
-            logger.error(f"Patient data error: {str(e)}")
+            import os
+            # Try Chroma collection with physician metadata
+            try:
+                import chromadb
+                from chromadb.config import Settings as _ChromaSettings
+                base_dir = os.getenv('CHROMA_DIR', 'chroma_db')
+                client = chromadb.Client(_ChromaSettings(chroma_db_impl="duckdb+parquet", persist_directory=base_dir))
+                cname = os.getenv('VISITIQ_PHYSICIANS_COLLECTION')
+                if cname is None:
+                    available = [c.name for c in client.list_collections()]
+                    preferred = ['physicians', 'doctors', 'providers']
+                    found = next((n for n in preferred if n in available), None)
+                    cname = found or (available[0] if available else None)
+                if cname:
+                    coll = client.get_collection(cname)
+                    # Pull all ids in small batches
+                    # If metadatas contain name/specialty/department, use them
+                    results = coll.get()  # may return all
+                    docs = []
+                    metas = results.get('metadatas') or []
+                    for md in metas:
+                        if not isinstance(md, dict):
+                            continue
+                        name = md.get('name') or md.get('Name')
+                        spec = md.get('specialty') or md.get('Specialty')
+                        dept = md.get('department') or md.get('Dept') or md.get('Department')
+                        if name and spec:
+                            docs.append({'Name': name, 'Specialty': spec, 'Dept': dept or ''})
+                    # Optional specialty filter
+                    if detected_specialties:
+                        def _norm(s: str) -> str:
+                            return self._normalize_text(s or '')
+                        dns = {_norm(d) for d in detected_specialties}
+                        docs = [d for d in docs if any(dn in _norm(d.get('Specialty')) for dn in dns)]
+                    return docs
+            except Exception:
+                pass
+            # Fallback: parse docs.json lines heuristically if present
+            try:
+                import json as _json
+                base_dir = os.getenv('CHROMA_DIR', 'chroma_db')
+                docs_path = os.path.join(base_dir, 'docs.json')
+                if os.path.exists(docs_path):
+                    with open(docs_path, 'r') as f:
+                        items = _json.load(f)
+                    docs: List[Dict[str, Any]] = []
+                    for it in items if isinstance(items, list) else []:
+                        if isinstance(it, dict) and {'name', 'specialty'} <= set(k.lower() for k in it.keys()):
+                            name = it.get('name') or it.get('Name')
+                            spec = it.get('specialty') or it.get('Specialty')
+                            dept = it.get('department') or it.get('Dept')
+                            docs.append({'Name': name, 'Specialty': spec, 'Dept': dept or ''})
+                    if detected_specialties:
+                        def _norm(s: str) -> str:
+                            return self._normalize_text(s or '')
+                        dns = {_norm(d) for d in detected_specialties}
+                        docs = [d for d in docs if any(dn in _norm(d.get('Specialty')) for dn in dns)]
+                    return docs
+            except Exception:
+                pass
+            return []
+        except Exception:
+            return []
+
+    def _list_patients_from_vector(self) -> List[Dict[str, Any]]:
+        """List patients using vector knowledge base when no scheduled patients are found.
+        Tries to extract simple patient records (Name, Condition) from metadatas or docs.json.
+        """
+        try:
+            import os
+            # Try Chroma collection likely to contain patients
+            try:
+                import chromadb
+                from chromadb.config import Settings as _ChromaSettings
+                base_dir = os.getenv('CHROMA_DIR', 'chroma_db')
+                client = chromadb.Client(_ChromaSettings(chroma_db_impl="duckdb+parquet", persist_directory=base_dir))
+                preferred = [
+                    os.getenv('VISITIQ_PATIENTS_COLLECTION') or '',
+                    'patients', 'patient_records', 'kb_patients'
+                ]
+                available = [c.name for c in client.list_collections()]
+                cname = next((n for n in preferred if n and n in available), None) or (available[0] if available else None)
+                if cname:
+                    coll = client.get_collection(cname)
+                    results = coll.get()
+                    docs = []
+                    metas = results.get('metadatas') or []
+                    for md in metas:
+                        if not isinstance(md, dict):
+                            continue
+                        name = md.get('name') or md.get('patient_name') or md.get('Name')
+                        cond = md.get('condition') or md.get('Condition')
+                        if name:
+                            docs.append({'Patient': name, 'Condition': cond or ''})
+                    return docs[:100]
+            except Exception:
+                pass
+            # Fallback docs.json
+            try:
+                import json as _json
+                base_dir = os.getenv('CHROMA_DIR', 'chroma_db')
+                docs_path = os.path.join(base_dir, 'docs.json')
+                if os.path.exists(docs_path):
+                    with open(docs_path, 'r') as f:
+                        items = _json.load(f)
+                    docs: List[Dict[str, Any]] = []
+                    for it in items if isinstance(items, list) else []:
+                        if isinstance(it, dict) and ('name' in it or 'patient_name' in it):
+                            name = it.get('patient_name') or it.get('name') or it.get('Name')
+                            cond = it.get('condition') or it.get('Condition')
+                            docs.append({'Patient': name, 'Condition': cond or ''})
+                    return docs[:100]
+            except Exception:
+                pass
+            return []
+        except Exception:
             return []
     
-    def _intelligent_fallback(self, query: str, query_type: str, relevant_data: str, patients_csv_path: str) -> Dict[str, Any]:
+    def _get_patient_structured_data(self, query: str) -> List[Dict[str, Any]]:
+        """Vector-only: no CSV; return empty list or build from vector if needed."""
+        return []
+    
+    def _intelligent_fallback(self, query: str, query_type: str, relevant_data: str) -> Dict[str, Any]:
         """Intelligent fallback when LLM fails"""
         query_lower = query.lower()
         
@@ -443,7 +696,17 @@ Provide your intelligent medical analysis now:"""
             practitioners = self.slot_manager.get_practitioners()
             
             # Specific filtering
-            if any(term in query_lower for term in ['endocrinologist', 'endocrinology']):
+            detected_list = self._detect_specialties_from_query(query)
+            if detected_list:
+                dns = {self._normalize_text(d) for d in detected_list}
+                filtered = [
+                    p for p in practitioners
+                    if any(dn in self._normalize_text(p.specialty) for dn in dns)
+                ]
+                label = ", ".join(detected_list)
+                message = f"Found {len(filtered)} {label} physician{'s' if len(filtered) != 1 else ''}"
+                response = f"{label.title()} specialists: {len(filtered)} physician{'s' if len(filtered) != 1 else ''} available"
+            elif any(term in query_lower for term in ['endocrinologist', 'endocrinology']):
                 filtered = [p for p in practitioners if 'endocrinology' in p.specialty.lower()]
                 message = f"Found {len(filtered)} endocrinologist{'s' if len(filtered) != 1 else ''}"
                 response = f"Endocrinology specialists: {len(filtered)} physician{'s' if len(filtered) != 1 else ''} available"
@@ -465,36 +728,15 @@ Provide your intelligent medical analysis now:"""
             }
             
         elif query_type == "patient_query":
-            try:
-                df = pd.read_csv(patients_csv_path)
-                
-                if 'how many' in query_lower or 'count' in query_lower:
-                    message = f"We have {len(df)} patients total in our system"
-                    response = f"Patient database: {len(df)} total patients with {len(df[df['condition'].str.contains('Diabetes', case=False, na=False)])} diabetic, {len(df[df['bp_systolic'] > 140])} hypertensive"
-                else:
-                    patients_data = self._get_patient_structured_data(query, patients_csv_path)
-                    if 'critical' in query_lower:
-                        critical_count = len([p for p in patients_data if p['Risk Level'] in ['Emergency', 'High']])
-                        message = f"Found {critical_count} critical patients requiring immediate attention"
-                        response = f"Critical patient alert: {critical_count} patients with high-risk medical conditions need urgent care"
-                    else:
-                        message = f"Patient database: {len(df)} total patients"
-                        response = f"Patient overview: showing patient records with detailed medical assessments"
-                
-                return {
-                    'status': 'success',
-                    'message': message,
-                    'formatted_response': response,
-                    'data': self._get_patient_structured_data(query, patients_csv_path),
-                    'query_type': query_type
-                }
-                
-            except Exception as e:
-                return {
-                    'status': 'error',
-                    'message': f'Patient data error: {str(e)}',
-                    'formatted_response': 'Unable to access patient database'
-                }
+            snippets = self._retrieve_similar_docs(query, k=10)
+            response_text = "\n---\n".join(snippets) if snippets else "No relevant knowledge snippets found."
+            return {
+                'status': 'success',
+                'message': 'Patient query processed using vector knowledge only',
+                'formatted_response': response_text,
+                'data': [],
+                'query_type': query_type
+            }
         
         # Default fallback
         return {
@@ -504,51 +746,36 @@ Provide your intelligent medical analysis now:"""
             'query_type': query_type
         }
     
-    def _get_relevant_data(self, query: str, patients_csv_path: str) -> tuple[str, str]:
+    def _get_relevant_data(self, query: str) -> tuple[str, str]:
         """Get only relevant data for the specific query"""
         query_lower = query.lower()
         
-        # Physician-related queries
-        if any(word in query_lower for word in ['physician', 'doctor', 'specialist', 'cardiologist', 'endocrinologist']):
-            practitioners = self.slot_manager.get_practitioners()
-            data = "PHYSICIANS:\n"
-            for i, p in enumerate(practitioners, 1):
-                data += f"{i}. {p.name} - {p.specialty} ({p.department})\n"
-            return "physician_query", data
-        
         # Patient-related queries
-        elif any(word in query_lower for word in ['patient', 'critical', 'diabetes', 'sugar', 'bp', 'blood pressure', 'heart']):
-            try:
-                df = pd.read_csv(patients_csv_path)
-                data = f"PATIENTS (Total: {len(df)}):\n"
-                
-                # Include relevant patient details
-                for _, row in df.head(10).iterrows():  # Limit to prevent overload
-                    data += f"Patient {row.get('patient_id', 'N/A')}: {row.get('name', 'N/A')} | "
-                    data += f"Age: {row.get('age', 'N/A')} | "
-                    data += f"Condition: {row.get('condition', 'N/A')} | "
-                    data += f"Glucose: {row.get('glucose_mg_dL', 'N/A')} mg/dL | "
-                    data += f"BP: {row.get('bp_systolic', 'N/A')}/{row.get('bp_diastolic', 'N/A')}\n"
-                
-                if len(df) > 10:
-                    data += f"... and {len(df) - 10} more patients\n"
-                
-                return "patient_query", data
-            except Exception as e:
-                return "patient_query", f"Patient data error: {str(e)}"
+        if any(word in query_lower for word in ['patient', 'patients', 'critical', 'diabetes', 'sugar', 'bp', 'blood pressure', 'heart']):
+            # Vector-only context for patients
+            snippets = self._retrieve_similar_docs(query, k=10)
+            data = "KNOWLEDGE (Patients):\n" + "\n---\n".join(snippets)
+            return "patient_query", data
+        
+        # Physician-related queries (expanded) or explicit specialty aliases detected
+        detected_specs = self._detect_specialties_from_query(query)
+        if any(
+            word in query_lower for word in [
+                'physician', 'doctor', 'specialist', 'cardiologist',
+                'endocrinologist', 'orthopedic', 'orthopaedic', 'ortho'
+            ]
+        ) or bool(detected_specs):
+            # Vector-only context for physicians
+            snippets = self._retrieve_similar_docs(query, k=8)
+            data = "KNOWLEDGE (Physicians):\n" + "\n---\n".join(snippets)
+            return "physician_query", data
         
         # Scheduling/slot queries
         elif any(word in query_lower for word in ['slot', 'appointment', 'schedule', 'available']):
-            try:
-                slots = self.slot_manager.get_available_slots()
-                data = f"AVAILABLE SLOTS (Total: {len(slots)}):\n"
-                for slot in slots[:10]:  # Show first 10
-                    data += f"Slot: {slot.start.strftime('%Y-%m-%d %H:%M')} | "
-                    data += f"Physician ID: {slot.practitioner_id} | "
-                    data += f"Duration: {slot.duration}min\n"
-                return "scheduling_query", data
-            except Exception as e:
-                return "scheduling_query", f"Scheduling data error: {str(e)}"
+            # Vector-only context for scheduling
+            snippets = self._retrieve_similar_docs(query, k=8)
+            data = "KNOWLEDGE (Scheduling):\n" + "\n---\n".join(snippets)
+            return "scheduling_query", data
         
         # Default - mixed query
         else:
@@ -558,12 +785,8 @@ Provide your intelligent medical analysis now:"""
             for p in practitioners[:5]:
                 data += f"- {p.name} ({p.specialty})\n"
             
-            try:
-                df = pd.read_csv(patients_csv_path)
-                data += f"\nPatients: {len(df)} total\n"
-                data += f"Sample conditions: {', '.join(df['condition'].unique()[:5])}\n"
-            except:
-                data += "\nPatient data unavailable\n"
+            # Vector-only: do not use CSV in overview; add note instead
+            data += "\nPatients: (vector-backed overview)\n"
             
             return "general_query", data
     

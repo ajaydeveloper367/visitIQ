@@ -138,6 +138,7 @@ generate_data() {
     echo -e "${BLUE}📊 Generating healthcare data...${NC}"
     cd "$INSTALL_DIR"
     source venv/bin/activate
+    export CHROMA_DIR="$INSTALL_DIR/chroma_db"
     python tools/generate_data.py --data-dir data "$@"
     echo -e "${GREEN}✅ Data generation complete!${NC}"
     echo -e "${BLUE}🚀 Ready to start: ./visitiq start${NC}"
