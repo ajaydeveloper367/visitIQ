@@ -717,6 +717,10 @@ Provide your intelligent medical analysis now:"""
                     df = self._load_patients_df()
                 
                 if 'how many' in query_lower or 'count' in query_lower:
+                    try:
+                        df = df.drop_duplicates(subset=['patient_id'])
+                    except Exception:
+                        pass
                     message = f"We have {len(df)} patients total in our system"
                     response = f"Patient database: {len(df)} total patients with {len(df[df['condition'].str.contains('Diabetes', case=False, na=False)])} diabetic, {len(df[df['bp_systolic'] > 140])} hypertensive"
                 else:

@@ -94,6 +94,14 @@ class SlotManager:
                         specialty=p.get('specialty', p.get('department', 'General')),
                         department=p.get('department', p.get('specialty', 'General'))
                     )
+                # Fallback to JSON practitioners if vector metadata lacks them
+                if not self._practitioners and os.path.exists(self.practitioners_file):
+                    try:
+                        with open(self.practitioners_file, 'r') as f:
+                            data = json.load(f)
+                            self._practitioners = {p['id']: FHIRPractitioner(**p) for p in data}
+                    except Exception:
+                        self._practitioners = {}
 
                 # Slots
                 from datetime import datetime

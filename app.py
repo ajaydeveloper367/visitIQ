@@ -620,8 +620,8 @@ if view == '🤖 AI Chatbot Assistant':
                     border-left: 4px solid #3b82f6;\">
             <div style=\"display:flex; align-items:center; justify-content:space-between;\">
                 <h2 style=\"color: #1e3a8a; margin: 0 0 0.5rem 0; font-family: 'Poppins', sans-serif;\">
-                    👋 Hello! I'm your VisitIQ Assistant
-                </h2>
+                👋 Hello! I'm your VisitIQ Assistant
+            </h2>
             </div>
             <p style=\"color: #1e40af; margin: 0; font-size: 1rem;\">
                 I'm here to help you navigate healthcare scheduling with ease. Ask me anything about 
@@ -683,10 +683,10 @@ if view == '🤖 AI Chatbot Assistant':
     # Simple input form that clears on submit
     with st.form(key="chat_form", clear_on_submit=True):
         user_query = st.text_input(
-            'Ask a question:',
-            placeholder='💭 "Who are our available endocrinologists?" or "Show me Dr. Chen\'s schedule for tomorrow"',
-            label_visibility='collapsed'
-        )
+        'Ask a question:',
+        placeholder='💭 "Who are our available endocrinologists?" or "Show me Dr. Chen\'s schedule for tomorrow"',
+        label_visibility='collapsed'
+    )
         submitted = st.form_submit_button("Send")
     
     if submitted and user_query and not st.session_state.form_submitted:
@@ -706,116 +706,72 @@ if view == '🤖 AI Chatbot Assistant':
         st.session_state.form_submitted = False
         
         # Display response immediately
-        if response['status'] == 'success':
-            formatted_response = response.get('formatted_response', response['message'])
-            
-            # Display structured data if available
-            if 'data' in response and response['data']:
-                st.success(response['message'])
-                
-                # Display data based on query type
-                if isinstance(response['data'], list) and len(response['data']) > 0:
-                    if 'Name' in response['data'][0] and 'Specialty' in response['data'][0]:
-                        # Physician data with column configuration
-                        df = pd.DataFrame(response['data'])
-                        st.dataframe(
-                            df, 
-                            use_container_width=True,
-                            column_config={
-                                "ID": st.column_config.TextColumn("ID", width="small"),
-                                "Name": st.column_config.TextColumn("Name", width="medium"),
-                                "Specialty": st.column_config.TextColumn("Specialty", width="medium"), 
-                                "Dept": st.column_config.TextColumn("Department", width="medium"),
-                                "Contact": st.column_config.TextColumn("Contact", width="medium")
-                            }
-                        )
-                    elif 'Time' in response['data'][0]:
-                        # Slot data - dynamic height based on data size
-                        df = pd.DataFrame(response['data'])
-                        dynamic_height = min(len(df) * 35 + 50, 400)  # Cap at 400px for chat
-                        st.data_editor(
-                            df, 
-                            use_container_width=True,
-                            height=dynamic_height,
-                            disabled=True,  # Read-only
-                            hide_index=True
-                        )
-                    elif 'Patient ID' in response['data'][0] and 'Risk Level' in response['data'][0]:
-                        # Patient data with risk assessment and color coding
-                        df = pd.DataFrame(response['data'])
-                        
-                        # Color coding function for risk levels
-                        def highlight_risk_level(val):
-                            if val in ['CRITICAL', 'Emergency']:
-                                return 'background-color: #ffebee; color: #d32f2f; font-weight: 600; border-left: 4px solid #d32f2f;'
-                            elif val in ['HIGH', 'High']:
-                                return 'background-color: #fff3e0; color: #f57c00; font-weight: 600; border-left: 4px solid #f57c00;'
-                            elif val in ['MODERATE', 'Medium']:
-                                return 'background-color: #f3f4f6; color: #6b7280; font-weight: 500; border-left: 4px solid #6b7280;'
-                            elif val in ['LOW', 'Low']:
-                                return 'background-color: #f0f9f0; color: #2e7d32; font-weight: 500; border-left: 4px solid #2e7d32;'
-                            return ''
-                        
-                        # Apply styling with MODERN pandas method (map instead of deprecated applymap)
-                        try:
-                            styled_df = df.style.map(highlight_risk_level, subset=['Risk Level'])  # FIXED: map instead of applymap
-                            print(f"✅ Applied color styling to {len(df)} patients")
-                        except Exception as e:
-                            print(f"❌ Styling error: {e}")
-                            styled_df = df.style  # Fallback to basic styling
-                        
-                        st.dataframe(
-                            styled_df,
-                            use_container_width=True,
-                            height=min(len(df) * 35 + 50, 600),  # Show all patients with scrollbar
-                            column_config={
-                                "Patient ID": st.column_config.TextColumn("ID", width="small"),
-                                "Name": st.column_config.TextColumn("Name", width="medium"),
-                                "Age": st.column_config.NumberColumn("Age", width="small"),
-                                "Condition": st.column_config.TextColumn("Condition", width="medium"),
-                                "Risk Level": st.column_config.TextColumn("Risk", width="small"),
-                                "Risk Score": st.column_config.NumberColumn("Score", width="small"),
-                                "Glucose": st.column_config.TextColumn("Glucose", width="small"),
-                                "BP": st.column_config.TextColumn("BP", width="small"),
-                                "History": st.column_config.TextColumn("History", width="medium"),
-                                "Medical Reasons": st.column_config.TextColumn("Medical Reasons", width="large"),
-                                "Reasoning Source": st.column_config.TextColumn("AI Method", width="medium")
-                            }
-                        )
-                        # Don't show formatted_response for patient tables - avoid duplication
-                        
-                    elif 'patient_id' in response['data'][0]:
-                        # Patient priority data
-                        df = pd.DataFrame(response['data'])
-                        st.dataframe(df.style.background_gradient(subset=['score']), use_container_width=True)
-                        # Don't show formatted_response for priority data - avoid duplication
-                        
-                    else:
-                        # For other data types, show both table and formatted response
-                        st.code(formatted_response, language='text')
+        status = response.get('status')
+        if status == 'success':
+            formatted_response = response.get('formatted_response', response.get('message', ''))
+            data = response.get('data')
+            if isinstance(data, list) and len(data) > 0:
+                first = data[0]
+                if 'Name' in first and 'Specialty' in first:
+                    df = pd.DataFrame(data)
+                    st.dataframe(df, use_container_width=True, column_config={
+                        "ID": st.column_config.TextColumn("ID", width="small"),
+                        "Name": st.column_config.TextColumn("Name", width="medium"),
+                        "Specialty": st.column_config.TextColumn("Specialty", width="medium"),
+                        "Dept": st.column_config.TextColumn("Department", width="medium"),
+                        "Contact": st.column_config.TextColumn("Contact", width="medium")
+                    })
+                elif 'Time' in first:
+                    df = pd.DataFrame(data)
+                    dynamic_height = min(len(df) * 35 + 50, 400)
+                    st.data_editor(df, use_container_width=True, height=dynamic_height, disabled=True, hide_index=True)
+                elif 'Patient ID' in first and 'Risk Level' in first:
+                    df = pd.DataFrame(data)
+                    def highlight_risk_level(val):
+                        if val in ['CRITICAL', 'Emergency']:
+                            return 'background-color: #ffebee; color: #d32f2f; font-weight: 600; border-left: 4px solid #d32f2f;'
+                        elif val in ['HIGH', 'High']:
+                            return 'background-color: #fff3e0; color: #f57c00; font-weight: 600; border-left: 4px solid #f57c00;'
+                        elif val in ['MODERATE', 'Medium']:
+                            return 'background-color: #f3f4f6; color: #6b7280; font-weight: 500; border-left: 4px solid #6b7280;'
+                        elif val in ['LOW', 'Low']:
+                            return 'background-color: #f0f9f0; color: #2e7d32; font-weight: 500; border-left: 4px solid #2e7d32;'
+                        return ''
+                    try:
+                        styled_df = df.style.map(highlight_risk_level, subset=['Risk Level'])
+                    except Exception:
+                        styled_df = df.style
+                    st.dataframe(styled_df, use_container_width=True, height=min(len(df) * 35 + 50, 600), column_config={
+                        "Patient ID": st.column_config.TextColumn("ID", width="small"),
+                        "Name": st.column_config.TextColumn("Name", width="medium"),
+                        "Age": st.column_config.NumberColumn("Age", width="small"),
+                        "Condition": st.column_config.TextColumn("Condition", width="medium"),
+                        "Risk Level": st.column_config.TextColumn("Risk", width="small"),
+                        "Risk Score": st.column_config.NumberColumn("Score", width="small"),
+                        "Glucose": st.column_config.TextColumn("Glucose", width="small"),
+                        "BP": st.column_config.TextColumn("BP", width="small"),
+                        "History": st.column_config.TextColumn("History", width="medium"),
+                        "Medical Reasons": st.column_config.TextColumn("Medical Reasons", width="large"),
+                        "Reasoning Source": st.column_config.TextColumn("AI Method", width="medium")
+                    })
+                elif 'patient_id' in first:
+                    df = pd.DataFrame(data)
+                    st.dataframe(df.style.background_gradient(subset=['score']), use_container_width=True)
                 else:
-                    # Only show formatted_response if no structured data
                     st.code(formatted_response, language='text')
             else:
-                st.success(formatted_response)
-            
-        elif response['status'] == 'not_found':
-            st.warning(response['message'])
-            if 'suggestions' in response:
-                st.write('**Suggestions:**')
-                for suggestion in response['suggestions']:
-                    st.write(f"• {suggestion}")
-        
-        elif response['status'] == 'no_slots':
-            st.info(response['message'])
-        
+                st.success(formatted_response if formatted_response else response.get('message', ''))
+        elif status == 'not_found':
+            st.warning(response.get('message', 'Not found'))
+            for suggestion in response.get('suggestions', []) or []:
+                st.write(f"• {suggestion}")
+        elif status == 'no_slots':
+            st.info(response.get('message', ''))
         else:
             st.error(response.get('message', 'Unknown error occurred'))
-            if 'suggestions' in response:
-                st.write('**Try these instead:**')
-                for suggestion in response['suggestions']:
-                    st.write(f"• {suggestion}")
-        
+            for suggestion in response.get('suggestions', []) or []:
+                st.write(f"• {suggestion}")
+            
         # Add to chat history (already handled above)
         # st.session_state.chat_history.append((user_query, formatted_response if 'formatted_response' in response else response['message']))
     
@@ -828,11 +784,28 @@ if view == '🤖 AI Chatbot Assistant':
         st.session_state.slots_clicked = False
     if 'physicians_clicked' not in st.session_state:
         st.session_state.physicians_clicked = False
+    if 'patients_list_clicked' not in st.session_state:
+        st.session_state.patients_list_clicked = False
+    if 'count_physicians_clicked' not in st.session_state:
+        st.session_state.count_physicians_clicked = False
+    if 'count_patients_clicked' not in st.session_state:
+        st.session_state.count_patients_clicked = False
     
     # Check if any table is currently displayed
-    any_table_active = (st.session_state.get('physicians_clicked', False) or 
-                       st.session_state.get('slots_clicked', False) or 
-                       st.session_state.get('processing_prioritization', False))
+    any_table_active = (
+        st.session_state.get('physicians_clicked', False) or 
+        st.session_state.get('patients_list_clicked', False) or 
+        st.session_state.get('count_physicians_clicked', False) or 
+        st.session_state.get('count_patients_clicked', False) or 
+        st.session_state.get('processing_prioritization', False)
+    )
+    
+    # Helper to reset quick-action flags
+    def _reset_quick_actions():
+        st.session_state.physicians_clicked = False
+        st.session_state.patients_list_clicked = False
+        st.session_state.count_physicians_clicked = False
+        st.session_state.count_patients_clicked = False
     
     # Only show Quick Actions if NO table is displayed
     if not any_table_active:
@@ -848,7 +821,7 @@ if view == '🤖 AI Chatbot Assistant':
             """, 
             unsafe_allow_html=True
         )
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4, col5 = st.columns(5)
         
         with col1:
             if st.button('📝 List All Physicians'):
@@ -856,13 +829,20 @@ if view == '🤖 AI Chatbot Assistant':
                 st.rerun()
         
         with col2:
-            if st.button('📅 Today\'s Available Slots'):
-                st.session_state.slots_clicked = True
+            if st.button('👥 List All Patients'):
+                st.session_state.patients_list_clicked = True
                 st.rerun()
         
-        with col3:
-            if st.button('🎯 Smart Patient Prioritization'):
-                st.session_state.processing_prioritization = True
+        # Removed prioritization quick action from Chat; moved to its tab
+
+        with col4:
+            if st.button('🔢 Count of Physicians'):
+                st.session_state.count_physicians_clicked = True
+                st.rerun()
+
+        with col5:
+            if st.button('🔢 Count of Patients'):
+                st.session_state.count_patients_clicked = True
                 st.rerun()
     
     # Display physicians table OUTSIDE of columns to use full width  
@@ -874,6 +854,9 @@ if view == '🤖 AI Chatbot Assistant':
         response = chatbot.process_query('list all physicians')
         if response.get('data'):
             df = pd.DataFrame(response['data'])
+            # add index for easy counting
+            df.index = df.index + 1
+            df.index.name = 'No.'
             # Dynamic height based on data size (35px per row + 50px header)
             dynamic_height = min(len(df) * 35 + 50, 400)  # Cap at 400px max
             st.data_editor(
@@ -881,45 +864,71 @@ if view == '🤖 AI Chatbot Assistant':
                 use_container_width=True,
                 height=dynamic_height,
                 disabled=True,
-                hide_index=True
+                hide_index=False
             )
             
             if st.button('🔄 Back to Quick Actions', key='physicians_back'):
-                st.session_state.physicians_clicked = False
+                _reset_quick_actions()
                 st.rerun()
         else:
             st.info(response.get('message', 'No physician data available'))
             if st.button('🔄 Back to Quick Actions', key='physicians_back_empty'):
-                st.session_state.physicians_clicked = False
+                _reset_quick_actions()
                 st.rerun()
         
-    # Display slots table OUTSIDE of columns to use full width        
-    if st.session_state.slots_clicked:
+    # Display patients list
+    if st.session_state.patients_list_clicked:
         st.markdown("---")
-        st.subheader("📅 Available Slots Today")
-        
+        st.subheader("👥 All Patients")
         chatbot = get_chatbot_cached()
-        response = chatbot.process_query('available slots today')
+        response = chatbot.process_query('list patients')
         if response.get('data'):
             df = pd.DataFrame(response['data'])
-            # Dynamic height based on data size (35px per row + 50px header)
-            dynamic_height = min(len(df) * 35 + 50, 500)  # Cap at 500px max for slots
-            st.data_editor(
-                df, 
-                use_container_width=True,
-                height=dynamic_height,
-                disabled=True,
-                hide_index=True
-            )
-            
-            if st.button('🔄 Back to Quick Actions', key='slots_back'):
-                st.session_state.slots_clicked = False
+            # ensure uniqueness by Patient ID
+            if 'Patient ID' in df.columns:
+                df = df.drop_duplicates(subset=['Patient ID'])
+            # add index for quick counting
+            df.index = df.index + 1
+            df.index.name = 'No.'
+            st.data_editor(df, use_container_width=True, hide_index=False, disabled=True)
+            if st.button('🔄 Back to Quick Actions', key='patients_back'):
+                _reset_quick_actions()
                 st.rerun()
         else:
-            st.info('No slots available today')
-            if st.button('🔄 Back to Quick Actions', key='slots_back_empty'):
-                st.session_state.slots_clicked = False
+            st.info(response.get('message', 'No patient data available'))
+            if st.button('🔄 Back to Quick Actions', key='patients_back_empty'):
+                _reset_quick_actions()
                 st.rerun()
+
+    # Display counts
+    if st.session_state.count_physicians_clicked:
+        st.markdown("---")
+        st.subheader("🔢 Physician Count")
+        # Direct count for speed and accuracy
+        try:
+            practitioners = slot_manager.get_practitioners()
+            st.success(f"Physician count: {len(practitioners)}")
+        except Exception as e:
+            st.error(f"Error: {e}")
+        if st.button('🔄 Back to Quick Actions', key='count_physicians_back'):
+            _reset_quick_actions()
+            st.rerun()
+
+    if st.session_state.count_patients_clicked:
+        st.markdown("---")
+        st.subheader("🔢 Patient Count")
+        try:
+            df = patients_df.copy()
+            if 'patient_id' in df.columns:
+                df = df.drop_duplicates(subset=['patient_id'])
+            st.success(f"Patient count: {len(df)}")
+        except Exception as e:
+            st.error(f"Error: {e}")
+        if st.button('🔄 Back to Quick Actions', key='count_patients_back'):
+            _reset_quick_actions()
+            st.rerun()
+        
+    # Removed inline slots display from Chat; moved to Slot Management
     
     # Handle prioritization processing
     if st.session_state.processing_prioritization:
@@ -1053,6 +1062,9 @@ elif view == '📅 Slot Management':
     practitioner_id = None if selected_physician == 'All Physicians' else selected_physician
     specialty = None if specialty_filter == 'All' else specialty_filter
     
+    # Persist date if coming from quick button
+    if 'slot_mgmt_selected_date' in st.session_state:
+        selected_date = st.session_state['slot_mgmt_selected_date']
     available_slots = slot_manager.get_available_slots(
         practitioner_id=practitioner_id,
         date_from=datetime.combine(selected_date, datetime.min.time()),
@@ -1402,8 +1414,10 @@ elif view == '🎯 Smart Patient Prioritization':
             else:
                 st.warning('No patients could be prioritized. Check available slots.')
 
+    # (Removed bottom-left quick-run button to avoid duplication; run via primary button above)
+
     # If we have cached results from a previous run, show them persistently
-    elif st.session_state.get('priority_df_records'):
+    if not st.session_state.get('processing_prioritization', False) and st.session_state.get('priority_df_records'):
         priority_df = pd.DataFrame(st.session_state.priority_df_records)
         # Gentle professional color coding for priority levels
         def highlight_priority(val):

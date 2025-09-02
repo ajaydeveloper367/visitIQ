@@ -40,6 +40,10 @@ try:
     from langchain_ollama.llms import OllamaLLM
 except Exception:
     OllamaLLM = None
+try:
+    import requests as _requests
+except Exception:
+    _requests = None
 
 # -----------------------
 # Config
@@ -355,24 +359,41 @@ def _parse_json_from_text(text: str):
                 return None
     return None
 
-def _call_ollama(prompt: str, model_name: str = OLLAMA_MODEL_NAME, base_url: str = OLLAMA_BASE_URL, timeout: int = 15):
+def _call_ollama(prompt: str, model_name: str = OLLAMA_MODEL_NAME, base_url: str = OLLAMA_BASE_URL, timeout: int = 20):
+    """Call Ollama LLM.
+    1) Try langchain_ollama if available
+    2) Fallback to direct HTTP POST /api/generate (non-stream)
+    Raises if both paths fail.
     """
-    Use OllamaLLM.invoke(prompt) if available. If OllamaLLM is missing, raise.
-    """
-    if OllamaLLM is None:
-        raise RuntimeError("OllamaLLM is not available in the environment.")
-    # instantiate; pass base_url if supported by the class (langchain-ollama versions differ)
-    try:
-        # OllamaLLM signature may accept model and base_url
-        llm = OllamaLLM(model=model_name, base_url=base_url)
-    except TypeError:
-        # fallback: try without base_url
-        llm = OllamaLLM(model=model_name)
-    # call .invoke() which returns output text for many versions
-    out = llm.invoke(prompt)
-    if isinstance(out, (dict, list)):
-        return json.dumps(out)
-    return str(out)
+    last_err: Exception | None = None
+    # Path 1: langchain_ollama
+    if OllamaLLM is not None:
+        try:
+            try:
+                llm = OllamaLLM(model=model_name, base_url=base_url)
+            except TypeError:
+                llm = OllamaLLM(model=model_name)
+            out = llm.invoke(prompt)
+            if isinstance(out, (dict, list)):
+                return json.dumps(out)
+            return str(out)
+        except Exception as e:
+            last_err = e
+    # Path 2: direct HTTP to Ollama
+    if _requests is not None:
+        try:
+            resp = _requests.post(
+                f"{base_url}/api/generate",
+                json={"model": model_name, "prompt": prompt, "stream": False, "options": {"temperature": 0.1, "num_ctx": 4096}},
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            text = data.get("response") or data.get("message") or ""
+            return str(text)
+        except Exception as e:
+            last_err = e
+    raise RuntimeError(f"LLM call failed: {last_err}")
 
 # -----------------------
 # RAG prioritization entrypoint
@@ -426,7 +447,8 @@ def rag_prioritize_batch(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         )
         
         # Single LLM call for all patients - MAJOR performance boost!
-        llm_text = _call_ollama(batch_prompt, model_name=os.getenv("OLLAMA_MODEL", OLLAMA_MODEL_NAME), base_url=os.getenv("OLLAMA_URL", OLLAMA_BASE_URL))
+        # Ensure we propagate configured base URL and model explicitly
+        llm_text = _call_ollama(batch_prompt, model_name=OLLAMA_MODEL_NAME, base_url=OLLAMA_BASE_URL)
         
         # Parse the batch response
         batch_parsed = _parse_json_from_text(llm_text)
