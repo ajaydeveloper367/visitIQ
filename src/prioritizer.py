@@ -134,32 +134,118 @@ def _ensure_persist_dir():
 
 def build_vectorstore_from_csv(csv_path: str, persist_directory: str = PERSIST_DIR) -> Dict[str, Any]:
     """
-    Creates embeddings and stores:
-      - embeddings.npy
-      - docs.json (list of doc texts)
-      - ids.json (list of ids)
-    Returns a dict summary.
+    Legacy helper: Build vectorstore ONLY from patients CSV.
+    Prefer build_vectorstore_from_sources for full ingestion.
     """
-    _ensure_persist_dir()
-    df = pd.read_csv(csv_path)
+    return build_vectorstore_from_sources(data_dir=os.path.dirname(csv_path) or ".", persist_directory=persist_directory)
 
-    docs = []
-    ids = []
-    for _, row in df.iterrows():
-        pid = str(row.get("patient_id", ""))
-        txt = (
-            f"Patient ID: {pid}. Name: {row.get('name','')}. Age: {row.get('age','')}. "
-            f"Condition: {row.get('condition','')}. Vitals: Glucose {row.get('glucose_mg_dL','')}; "
-            f"BP {row.get('bp_systolic','')}/{row.get('bp_diastolic','')}; HR {row.get('heart_rate','')}. "
-            f"History: {row.get('history','')}. Notes: {row.get('notes','')}."
-        )
-        ids.append(pid)
+def _read_json_safely(path: str):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+def build_vectorstore_from_sources(data_dir: str = "data", persist_directory: str = PERSIST_DIR) -> Dict[str, Any]:
+    """
+    Build embeddings from ALL core sources into a single lightweight local vectorstore.
+    Sources:
+      - patients.csv
+      - practitioners.json (physicians)
+      - slots.json (available slots)
+      - schedules.json (optional)
+    Output:
+      - chroma_db/embeddings.npy
+      - chroma_db/docs.json
+      - chroma_db/ids.json
+    """
+    # Ensure custom persist directory exists
+    os.makedirs(persist_directory, exist_ok=True)
+
+    docs: List[str] = []
+    ids: List[str] = []
+    metadatas: List[Dict[str, Any]] = []
+
+    # Patients
+    patients_csv = os.path.join(data_dir, "patients.csv")
+    if os.path.exists(patients_csv):
+        df = pd.read_csv(patients_csv)
+        for _, row in df.iterrows():
+            pid = str(row.get("patient_id", ""))
+            txt = (
+                f"[PATIENT] ID:{pid}; Name:{row.get('name','')}; Age:{row.get('age','')}; "
+                f"Condition:{row.get('condition','')}; Glucose:{row.get('glucose_mg_dL','')}; "
+                f"BP:{row.get('bp_systolic','')}/{row.get('bp_diastolic','')}; HR:{row.get('heart_rate','')}; "
+                f"History:{row.get('history','')}; Notes:{row.get('notes','')}"
+            )
+            ids.append(f"patient:{pid}")
+            docs.append(txt)
+            metadatas.append({
+                "type": "patient",
+                "patient_id": pid,
+                "name": row.get('name',''),
+                "age": row.get('age',''),
+                "condition": row.get('condition',''),
+                "glucose_mg_dL": row.get('glucose_mg_dL',''),
+                "bp_systolic": row.get('bp_systolic',''),
+                "bp_diastolic": row.get('bp_diastolic',''),
+                "heart_rate": row.get('heart_rate',''),
+                "history": row.get('history',''),
+                "notes": row.get('notes','')
+            })
+
+    # Physicians / Practitioners
+    practitioners_json = os.path.join(data_dir, "practitioners.json")
+    practitioners = _read_json_safely(practitioners_json) or []
+    for p in practitioners:
+        pid = str(p.get("id", ""))
+        name = p.get("name", "")
+        specialty = p.get("specialty", p.get("department", ""))
+        dept = p.get("department", specialty)
+        txt = f"[PHYSICIAN] ID:{pid}; Name:{name}; Specialty:{specialty}; Department:{dept}"
+        ids.append(f"physician:{pid}")
         docs.append(txt)
+        metadatas.append({
+            "type": "physician",
+            "id": pid,
+            "name": name,
+            "specialty": specialty,
+            "department": dept
+        })
+
+    # Slots (optional)
+    slots_json = os.path.join(data_dir, "slots.json")
+    slots = _read_json_safely(slots_json) or []
+    for s in slots:
+        sid = str(s.get("id", ""))
+        practitioner_id = s.get("practitioner_id", "")
+        start = s.get("start", "")
+        end = s.get("end", "")
+        status = s.get("status", "")
+        specialty = s.get("specialty", "")
+        txt = (
+            f"[SLOT] ID:{sid}; PractitionerID:{practitioner_id}; Specialty:{specialty}; "
+            f"Start:{start}; End:{end}; Status:{status}"
+        )
+        ids.append(f"slot:{sid}")
+        docs.append(txt)
+        metadatas.append({
+            "type": "slot",
+            "id": sid,
+            "practitioner_id": practitioner_id,
+            "specialty": specialty,
+            "start": start,
+            "end": end,
+            "status": status
+        })
+
+    if len(docs) == 0:
+        return {"n": 0, "persist_directory": persist_directory}
 
     # embeddings (with lazy import)
     if not _import_heavy_dependencies():
         raise RuntimeError("ML dependencies not available for building vectorstore")
-    
+
     model = SentenceTransformer(EMBEDDING_MODEL)
     emb = model.encode(docs, show_progress_bar=False)
     np.save(os.path.join(persist_directory, "embeddings.npy"), emb)
@@ -167,7 +253,11 @@ def build_vectorstore_from_csv(csv_path: str, persist_directory: str = PERSIST_D
         json.dump(docs, f, ensure_ascii=False, indent=2)
     with open(os.path.join(persist_directory, "ids.json"), "w", encoding="utf-8") as f:
         json.dump(ids, f, ensure_ascii=False, indent=2)
+    with open(os.path.join(persist_directory, "metadatas.json"), "w", encoding="utf-8") as f:
+        json.dump(metadatas, f, ensure_ascii=False, indent=2)
 
+    # Clear caches so new vectorstore is picked up
+    clear_caches()
     return {"n": len(docs), "persist_directory": persist_directory}
 
 def _get_cached_model():
@@ -305,27 +395,27 @@ def rag_prioritize_batch(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         )
         patient_texts.append(patient_text)
     
-    # ⚡ SIMPLIFIED: Skip heavy vectorstore operations for speed
-    # Use lightweight medical context instead of expensive similarity search
-    medical_context = (
-        "Medical Guidelines: Emergency (glucose >400, BP >180/110, signs of stroke/MI). "
-        "High (glucose 250-400, BP 160-179/100-109, diabetic complications). "
-        "Medium (glucose 180-250, BP 140-159/90-99). "
-        "Low (controlled vitals, stable condition)."
-    )
-    all_contexts = [medical_context] * len(rows)  # Same context for all - much faster!
+    # 🔁 TRUE RAG: Retrieve similar cases from vectorstore per patient
+    # Falls back gracefully to empty context if vectorstore missing
+    retrieved_contexts: List[str] = []
+    for patient_text in patient_texts:
+        sims = _query_similar_docs(patient_text, k=TOP_K)
+        retrieved_contexts.append("\n".join(sims) if sims else "")
     
     # ⚡ OPTIMIZED: Single batch LLM call for all patients instead of individual calls
     try:
-        # ⚡ SIMPLIFIED: Streamlined prompt for better JSON parsing
+        # Streamlined prompt for better JSON parsing
         batch_prompt = "Medical triage for multiple patients. Return JSON array only.\n\n"
         
         # Add patients in compact format
         for i, patient_text in enumerate(patient_texts):
-            batch_prompt += f"{i+1}. {patient_text}\n"
+            ctx = retrieved_contexts[i]
+            if ctx:
+                batch_prompt += f"{i+1}. {patient_text}\nSimilar Cases:\n{ctx}\n\n"
+            else:
+                batch_prompt += f"{i+1}. {patient_text}\nSimilar Cases:\n(none)\n\n"
         
         batch_prompt += (
-            f"\nContext: {all_contexts[0]}\n"  # Single context for all
             f"\nReturn JSON array with {len(rows)} objects: "
             '[{"priority_level": "Emergency/High/Medium/Low", "score": number, "reasons": ["reason1"]}]\n'
             "JSON:"
@@ -349,6 +439,13 @@ def rag_prioritize_batch(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                     if not llm_result.get("score") or llm_result.get("score", 0) < rule_result.get("score", 0):
                         llm_result["score"] = rule_result.get("score", 0)
                     
+                    # Debug info for UI transparency
+                    try:
+                        llm_result["debug_context"] = retrieved_contexts[i]
+                    except Exception:
+                        llm_result["debug_context"] = ""
+                    llm_result["reasoning_source"] = llm_result.get("reasoning_source", "🧠 LLM Medical Analysis")
+
                     # Combine reasons efficiently
                     rag_reasons = llm_result.get("reasons", [])
                     rule_reasons = rule_result.get("reasons", [])
@@ -361,10 +458,17 @@ def rag_prioritize_batch(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                     
                     results.append(llm_result)
                 else:
+                    # Fallback case gets debug markers
+                    rule_result["debug_context"] = ""
+                    rule_result["reasoning_source"] = "📋 Clinical Rules (LLM Batch Failed)"
                     results.append(rule_result)
         else:
             print(f"⚠️ Batch LLM parsing failed, using rule-based for all {len(rows)} patients")
-            results = rule_results
+            results = []
+            for rr in rule_results:
+                rr["debug_context"] = ""
+                rr["reasoning_source"] = "📋 Clinical Rules (LLM Batch Failed)"
+                results.append(rr)
             
     except Exception as e:
         print(f"⚠️ Batch LLM call failed: {e}, using rule-based for all {len(rows)} patients")

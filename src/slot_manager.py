@@ -20,8 +20,9 @@ class SlotManager:
     Provides persistence layer and business logic for slot operations
     """
     
-    def __init__(self, data_dir: str = "data"):
+    def __init__(self, data_dir: str = "data", vector_dir: Optional[str] = None):
         self.data_dir = data_dir
+        self.vector_dir = vector_dir
         os.makedirs(data_dir, exist_ok=True)
         
         # File paths
@@ -67,7 +68,72 @@ class SlotManager:
             json.dump([a.to_dict() for a in self._appointments.values()], f, indent=2)
     
     def load_data(self):
-        """Load data from JSON files"""
+        """Load data from vector DB metadatas.json if present, otherwise JSON files"""
+        # Prefer vector metadata if available (vector-first)
+        meta_path = None
+        if self.vector_dir:
+            candidate = os.path.join(self.vector_dir, "metadatas.json")
+            if os.path.exists(candidate):
+                meta_path = candidate
+
+        if meta_path:
+            try:
+                with open(meta_path, 'r', encoding='utf-8') as f:
+                    metas = json.load(f)
+
+                # Practitioners
+                practitioners = [m for m in metas if m.get('type') == 'physician']
+                self._practitioners = {}
+                for p in practitioners:
+                    pid = p.get('id') or p.get('practitioner_id') or p.get('name')
+                    if not pid:
+                        continue
+                    self._practitioners[str(pid)] = FHIRPractitioner(
+                        id=str(pid),
+                        name=p.get('name', 'Unknown'),
+                        specialty=p.get('specialty', p.get('department', 'General')),
+                        department=p.get('department', p.get('specialty', 'General'))
+                    )
+
+                # Slots
+                from datetime import datetime
+                self._slots = {}
+                slots = [m for m in metas if m.get('type') == 'slot']
+                for s in slots:
+                    sid = str(s.get('id'))
+                    try:
+                        start = datetime.fromisoformat(str(s.get('start'))) if s.get('start') else datetime.now()
+                        end = datetime.fromisoformat(str(s.get('end'))) if s.get('end') else start
+                    except Exception:
+                        start = end = datetime.now()
+
+                    status_raw = str(s.get('status', 'free')).upper()
+                    status = getattr(SlotStatus, status_raw, SlotStatus.free)
+
+                    slot = FHIRSlot(
+                        id=sid,
+                        schedule_id=s.get('schedule_id', f"sched-{s.get('practitioner_id','unknown')}"),
+                        practitioner_id=str(s.get('practitioner_id', '')),
+                        start=start,
+                        end=end,
+                        status=status,
+                        service_category=str(s.get('specialty', 'General')).lower(),
+                        service_type=s.get('service_type', [s.get('specialty', 'General')]) if isinstance(s.get('service_type'), list) else [s.get('specialty', 'General')],
+                        specialty=s.get('specialty', 'General'),
+                    )
+                    self._slots[sid] = slot
+
+                # Schedules are optional here; keep empty if not provided
+                self._schedules = {}
+
+                # Appointments remain as-is (empty at startup)
+                self._appointments = {}
+
+                return
+            except Exception as e:
+                print(f"⚠️ Vector metadata load failed, falling back to JSON files: {e}")
+
+        # Fallback: JSON files under data_dir
         # Practitioners
         if os.path.exists(self.practitioners_file):
             with open(self.practitioners_file, 'r') as f:
@@ -83,7 +149,21 @@ class SlotManager:
         # Slots
         if os.path.exists(self.slots_file):
             with open(self.slots_file, 'r') as f:
-                data = json.load(f)
+                raw = json.load(f)
+                data: List[Dict[str, Any]] = []
+                for s in raw:
+                    # ensure required fields exist
+                    s = dict(s)
+                    s.setdefault('schedule_id', f"sched-{s.get('practitioner_id','unknown')}")
+                    s.setdefault('service_category', str(s.get('specialty','General')).lower())
+                    s.setdefault('service_type', [s.get('specialty','General')])
+                    if isinstance(s.get('status'), str):
+                        try:
+                            SlotStatus(s['status'])
+                        except Exception:
+                            s['status'] = 'free'
+                    data.append(s)
+
                 self._slots = {s['id']: FHIRSlot.from_dict(s) for s in data}
         
         # Appointments
@@ -362,11 +442,26 @@ class SlotManager:
 
 # ============ Slot Manager Factory ============
 
-_slot_manager_instance = None
+_slot_manager_instance: Optional[SlotManager] = None
+_slot_manager_config: Dict[str, Optional[str]] = {"data_dir": None, "vector_dir": None}
 
-def get_slot_manager() -> SlotManager:
-    """Get singleton instance of SlotManager"""
-    global _slot_manager_instance
-    if _slot_manager_instance is None:
-        _slot_manager_instance = SlotManager()
+def get_slot_manager(data_dir: Optional[str] = None, vector_dir: Optional[str] = None) -> SlotManager:
+    """Get singleton SlotManager; initialize with provided directories.
+    If called with different directories than existing instance, reinitialize.
+    """
+    global _slot_manager_instance, _slot_manager_config
+
+    # Defaults
+    if data_dir is None:
+        data_dir = "data"
+
+    # Recreate if not exists or config changed
+    if (
+        _slot_manager_instance is None or
+        _slot_manager_config.get("data_dir") != data_dir or
+        _slot_manager_config.get("vector_dir") != vector_dir
+    ):
+        _slot_manager_instance = SlotManager(data_dir=data_dir, vector_dir=vector_dir)
+        _slot_manager_config = {"data_dir": data_dir, "vector_dir": vector_dir}
+
     return _slot_manager_instance

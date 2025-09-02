@@ -361,8 +361,11 @@ st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 # Initialize components with lazy loading for better startup performance
 @st.cache_resource
 def get_slot_manager_cached():
-    """Get slot manager - lightweight initialization"""
-    return get_slot_manager()
+    """Get slot manager - vector-first initialization"""
+    from pathlib import Path
+    data_dir = Path(__file__).parent / 'data'        # ~/.visitiq/app/data
+    vector_dir = Path(__file__).parent / 'chroma_db'  # ~/.visitiq/app/chroma_db
+    return get_slot_manager(data_dir=str(data_dir), vector_dir=str(vector_dir))
 
 @st.cache_resource  
 def get_prioritizer_cached():
@@ -418,49 +421,57 @@ view = st.sidebar.radio(
         '👩‍⚕️ Physicians & Schedules',
         '📅 Slot Management',
         '🎯 Smart Patient Prioritization',
-        '📋 Appointment Booking',
+        # '📋 Appointment Booking',  # Temporarily disabled
         '📊 Analytics & Reports'
     ]
 )
 
-# Load patient data with enhanced multi-format support
+# Vector-first patient loading (no CSV reads)
 @st.cache_data
-def load_patients(_force_refresh=False):
-    """Load patients with enhanced multi-format document support"""
+def load_patients(_force_refresh: bool = False) -> pd.DataFrame:
+    """Load patients directly from vector DB metadata; build if missing."""
+    import os
+    import json
+    import subprocess
+    from pathlib import Path
+
+    base_dir = Path(__file__).resolve().parent              # ~/.visitiq/app
+    meta_paths = [
+        base_dir / 'chroma_db' / 'metadatas.json',          # installed path
+        (base_dir.parent / 'chroma_db' / 'metadatas.json')  # root path
+    ]
+
+    # Attempt to load metadata
+    for mp in meta_paths:
+        if mp.exists():
+            with open(mp, 'r', encoding='utf-8') as f:
+                metas = json.load(f)
+            patients = [m for m in metas if m.get('type') == 'patient']
+            return pd.DataFrame(patients)
+
+    # Not present → try to build embeddings once from app/data
     try:
-        import sys
-        import os
-        
-        # Add the root src directory to Python path (app.py is in app/ folder)
-        root_src_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'src')
-        if root_src_path not in sys.path:
-            sys.path.append(root_src_path)
-        
-        from enhanced_patient_manager import get_enhanced_patients_for_prioritization
-        
-        # Get enhanced patients (CSV + multi-format documents)
-        enhanced_patients = get_enhanced_patients_for_prioritization()
-        
-        # Convert to DataFrame for compatibility with existing code
-        patients_df = pd.DataFrame(enhanced_patients)
-        
-        # Show summary of data sources
-        csv_count = len([p for p in enhanced_patients if p.get('document_count', 0) == 0])
-        enhanced_count = len([p for p in enhanced_patients if p.get('document_count', 0) > 0])
-        
-        print(f"📊 Patient Data Loaded:")
-        print(f"   📄 CSV patients: {csv_count}")
-        print(f"   📁 Enhanced (multi-format): {enhanced_count}")
-        print(f"   🎯 Total patients: {len(enhanced_patients)}")
-        
-        return patients_df
-        
-    except Exception as e:
-        print(f"⚠️ Enhanced patient loading failed: {e}")
-        print("🔄 Falling back to basic CSV loading")
-        
-        # Fallback to basic CSV loading
-        return pd.read_csv('data/patients.csv')
+        tools_local = base_dir / 'tools' / 'build_embeddings.py'
+        tools_root = (base_dir.parent / 'tools' / 'build_embeddings.py')
+        script_path = tools_local if tools_local.exists() else tools_root
+        if script_path.exists():
+            subprocess.run([
+                sys.executable, str(script_path),
+                '--data-dir', str(base_dir / 'data'),
+                '--persist', str(base_dir / 'chroma_db')
+            ], check=False)
+            # Try loading again
+            mp = base_dir / 'chroma_db' / 'metadatas.json'
+            if mp.exists():
+                with open(mp, 'r', encoding='utf-8') as f:
+                    metas = json.load(f)
+                patients = [m for m in metas if m.get('type') == 'patient']
+                return pd.DataFrame(patients)
+    except Exception as _:
+        pass
+
+    # Nothing available
+    return pd.DataFrame(columns=['patient_id','name','age','condition','glucose_mg_dL','bp_systolic','bp_diastolic','heart_rate','history','notes'])
 
 # Load patients data (always use enhanced loading)
 patients_df = load_patients()
@@ -470,8 +481,18 @@ col1, col2, col3 = st.columns([3, 2, 1])
 with col1:
     st.metric("📊 Total Patients", len(patients_df), help="Including CSV and multi-format document patients")
 with col3:
-    if st.button("🔄", help="Refresh data to load new files", key="refresh_btn", type="secondary"):
+    if st.button("🔄", help="Refresh data & rebuild embeddings", key="refresh_btn", type="secondary"):
         st.cache_data.clear()
+        try:
+            import subprocess, sys, os
+            # Determine tools path in repo or installed layout
+            base_dir = os.path.dirname(__file__)
+            tools_path = os.path.join(base_dir, "tools", "build_embeddings.py")
+            alt_tools_path = os.path.join(os.path.dirname(base_dir), "tools", "build_embeddings.py")
+            script_path = tools_path if os.path.exists(tools_path) else alt_tools_path
+            subprocess.run([sys.executable, script_path, "--data-dir", "data", "--persist", "chroma_db"], check=False)
+        except Exception as e:
+            st.warning(f"Embedding rebuild skipped: {e}")
         st.rerun()
 
 # ============ AI CHATBOT ASSISTANT ============
@@ -964,6 +985,7 @@ elif view == '📅 Slot Management':
 # ============ SMART PATIENT PRIORITIZATION ============
 elif view == '🎯 Smart Patient Prioritization':
     st.header('🎯 Smart Patient Prioritization')
+    st.caption('🧠 LLM Triage Policy: Emergency ≥400 mg/dL glucose or ≥180/110 BP; High 250–400 or 160–179/100–109; Medium 180–250 or 140–159/90–99; Low = controlled. Age/history modifiers applied. LLM decisions shown; rules only guard against under-triage or model failure.')
     
     # Configuration
     col1, col2, col3 = st.columns(3)
@@ -975,9 +997,11 @@ elif view == '🎯 Smart Patient Prioritization':
         def format_physician_option(x):
             if x == 'Auto-Select Best Match':
                 return '🤖 Auto-Select Best Match'
-            else:
-                physician = next(p for p in physicians if p.id == x)
-                return f"Dr. {physician.name} ({physician.specialty})"
+            physician = next(p for p in physicians if p.id == x)
+            raw = physician.name.strip()
+            # Avoid double 'Dr.' prefix
+            display = raw if raw.lower().startswith('dr') else f"Dr. {raw}"
+            return f"{display} ({physician.specialty})"
         
         selected_physician = st.selectbox(
             'Select Physician:',
@@ -1060,7 +1084,8 @@ elif view == '🎯 Smart Patient Prioritization':
                         if 'recommended_physician_id' in patient:
                             physician = next((p for p in physicians if p.id == patient['recommended_physician_id']), None)
                             if physician:
-                                recommended_physician = f"Dr. {physician.name}"
+                                raw = physician.name.strip()
+                                recommended_physician = raw if raw.lower().startswith('dr') else f"Dr. {raw}"
                                 recommended_department = physician.specialty
                         else:
                             # Determine best match based on condition
@@ -1078,7 +1103,8 @@ elif view == '🎯 Smart Patient Prioritization':
                         # Show selected physician
                         physician = next((p for p in physicians if p.id == selected_physician), None)
                         if physician:
-                            recommended_physician = f"Dr. {physician.name}"
+                            raw = physician.name.strip()
+                            recommended_physician = raw if raw.lower().startswith('dr') else f"Dr. {raw}"
                             recommended_department = physician.specialty
                     
                     priority_data.append({
@@ -1092,7 +1118,13 @@ elif view == '🎯 Smart Patient Prioritization':
                         'Medical Reasons': '; '.join(patient.get('base_reasons', [])[:2]) if patient.get('base_reasons') else 'Normal parameters',
                         'Recommended Physician': recommended_physician,
                         'Department': recommended_department,
-                        'AI Method': patient.get('reasoning_source', '❓ Unknown')
+                        'AI Method': patient.get('reasoning_source', '❓ Unknown'),
+                        'Details': json.dumps({
+                            'llm_priority': patient.get('base_priority_level'),
+                            'llm_score': patient.get('base_score'),
+                            'llm_reasons': patient.get('base_reasons', []),
+                            'llm_context': patient.get('debug_context', '')
+                        })
                     })
                 
                 priority_df = pd.DataFrame(priority_data)
@@ -1112,8 +1144,10 @@ elif view == '🎯 Smart Patient Prioritization':
                 
                 # Clean up the display - remove redundant columns if they exist
                 display_df = priority_df.copy()
-                if 'Rank' in display_df.columns:
-                    display_df = display_df.drop(columns=['Rank'])  # Remove redundant rank column
+                # Remove any redundant rank columns; we'll use the index titled 'Priority Rank'
+                for col in ['Rank', 'Priority Rank']:
+                    if col in display_df.columns:
+                        display_df = display_df.drop(columns=[col])
                 
                 # Reset index to start from 1 for better readability
                 display_df.index = display_df.index + 1
@@ -1125,7 +1159,7 @@ elif view == '🎯 Smart Patient Prioritization':
                 # styled_df = styled_df.background_gradient(subset=['Final Score'], cmap='RdYlGn')
                 
                 st.dataframe(
-                    styled_df, 
+                    styled_df,
                     use_container_width=True,
                     column_config={
                         "ID": st.column_config.TextColumn("ID", width="small"),
@@ -1137,7 +1171,8 @@ elif view == '🎯 Smart Patient Prioritization':
                         "Risk Level": st.column_config.TextColumn("Risk Level", width="small"),
                         "Risk Score": st.column_config.NumberColumn("Risk Score", width="small"),
                         "Medical Reasons": st.column_config.TextColumn("Medical Reasons", width="large"),
-                        "AI Method": st.column_config.TextColumn("AI Method", width="medium")
+                        "AI Method": st.column_config.TextColumn("AI Method", width="medium"),
+                        "Details": st.column_config.TextColumn("Details (raw LLM JSON)", help="Raw LLM output and context for transparency. Expand each cell to view.")
                     }
                 )
                 

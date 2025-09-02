@@ -3,7 +3,7 @@ FHIR-compliant data models for healthcare scheduling
 Based on FHIR R4 specification for Slot, Appointment, Practitioner, and Schedule resources
 """
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from enum import Enum
@@ -33,7 +33,7 @@ class FHIRPractitioner:
     name: str
     specialty: str
     department: str
-    qualification: List[str]
+    qualification: List[str] = field(default_factory=list)
     active: bool = True
     contact_phone: Optional[str] = None
     contact_email: Optional[str] = None

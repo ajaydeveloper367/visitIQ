@@ -21,8 +21,8 @@ class SmartLLMHealthcareChatbot:
         self.slot_manager = slot_manager
         self.llm_client = llm_client
     
-    def process_query(self, query: str, patients_csv_path: str = 'data/patients.csv') -> Dict[str, Any]:
-        """Process query with focused LLM approach"""
+    def process_query(self, query: str, patients_csv_path: str = '') -> Dict[str, Any]:
+        """Process query with focused LLM approach (vector/enhanced only)."""
         query = query.strip()
         
         if not query:
@@ -36,6 +36,55 @@ class SmartLLMHealthcareChatbot:
         
         # Smart query categorization and focused LLM processing
         return self._process_with_focused_llm(query, patients_csv_path)
+
+    def _load_patients_df(self) -> pd.DataFrame:
+        """Load patients from enhanced manager/vector DB (no CSV)."""
+        try:
+            # 1) Preferred: use enhanced patient manager (vector-first)
+            try:
+                # package-relative import when used from src
+                from .enhanced_patient_manager import get_enhanced_patients_for_prioritization
+            except Exception:
+                # absolute import when src is on path
+                from enhanced_patient_manager import get_enhanced_patients_for_prioritization
+            enhanced_patients = get_enhanced_patients_for_prioritization()
+            return pd.DataFrame(enhanced_patients)
+        except Exception:
+            pass
+
+        # 2) Robust fallback: read vector DB metadatas.json directly (installed app path)
+        try:
+            import os, json
+            candidates = [
+                os.path.expanduser('~/.visitiq/app/chroma_db/metadatas.json'),
+                os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'chroma_db', 'metadatas.json')
+            ]
+            for mp in candidates:
+                if os.path.exists(mp):
+                    with open(mp, 'r', encoding='utf-8') as f:
+                        metas = json.load(f)
+                    patients_meta = [m for m in metas if m.get('type') == 'patient']
+                    if patients_meta:
+                        normalized = []
+                        for m in patients_meta:
+                            normalized.append({
+                                'patient_id': str(m.get('patient_id', m.get('id', ''))).zfill(3),
+                                'name': m.get('name', 'Unknown Patient'),
+                                'age': int((m.get('age') or 50)),
+                                'condition': m.get('condition', 'Unknown'),
+                                'glucose_mg_dL': float(m.get('glucose_mg_dL') or 0),
+                                'bp_systolic': float(m.get('bp_systolic') or 0),
+                                'bp_diastolic': float(m.get('bp_diastolic') or 0),
+                                'heart_rate': float(m.get('heart_rate') or 0),
+                                'history': m.get('history', ''),
+                                'notes': m.get('notes', '')
+                            })
+                        return pd.DataFrame(normalized)
+        except Exception:
+            pass
+
+        # 3) Nothing found
+        return pd.DataFrame([])
     
     def _process_with_focused_llm(self, query: str, patients_csv_path: str) -> Dict[str, Any]:
         """Process queries with LLM intelligence + fast data access"""
@@ -145,7 +194,7 @@ Provide your intelligent medical analysis now:"""
     def _parse_patient_data(self, relevant_data: str, query: str, patients_csv_path: str) -> Dict[str, Any]:
         """FAST patient data parsing - structured response"""
         try:
-            df = pd.read_csv(patients_csv_path)
+            df = self._load_patients_df()
             query_lower = query.lower()
             
             # Filter based on query
@@ -284,6 +333,54 @@ Provide your intelligent medical analysis now:"""
                 'message': f'System error: {str(e)}',
                 'formatted_response': 'Unable to load system data.'
             }
+
+    # ===================== Department & Slots Enhancements =====================
+    _DEPARTMENT_ALIASES = {
+        'endocrinology': ['endocrinology', 'endocrinologist', 'diabetes'],
+        'cardiology': ['cardiology', 'cardiologist', 'heart'],
+        'neurology': ['neurology', 'neurologist', 'brain', 'stroke'],
+        'orthopedics': ['orthopedics', 'orthopedic', 'bone', 'joint'],
+        'pulmonology': ['pulmonology', 'pulmonary', 'respiratory', 'asthma', 'copd'],
+        'nephrology': ['nephrology', 'renal', 'kidney'],
+        'gastroenterology': ['gastroenterology', 'gi', 'stomach', 'liver'],
+        'dermatology': ['dermatology', 'skin'],
+        'oncology': ['oncology', 'cancer'],
+        'pediatrics': ['pediatrics', 'children'],
+        'gynecology': ['gynecology', 'obgyn', 'women'],
+        'ophthalmology': ['ophthalmology', 'eye'],
+        'psychiatry': ['psychiatry', 'mental'],
+        'radiology': ['radiology', 'imaging'],
+        'urology': ['urology', 'urinary'],
+        'rheumatology': ['rheumatology'],
+        'hematology': ['hematology', 'blood'],
+        'infectious disease': ['infectious', 'id'],
+        'otolaryngology': ['ent', 'otolaryngology']
+    }
+
+    def _detect_department(self, text: str) -> Optional[str]:
+        q = text.lower()
+        for dept, aliases in self._DEPARTMENT_ALIASES.items():
+            if any(a in q for a in aliases):
+                return dept
+        return None
+
+    def _parse_time_window(self, text: str):
+        now = datetime.now()
+        start = now
+        q = text.lower()
+        if 'tomorrow' in q:
+            start = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            end = start + timedelta(days=1)
+        elif 'month' in q:
+            end = start + timedelta(days=30)
+        elif 'week' in q or '7 days' in q:
+            end = start + timedelta(days=7)
+        elif 'today' in q:
+            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            end = start + timedelta(days=1)
+        else:
+            end = start + timedelta(days=7)
+        return start, end
     
     def _calculate_risk_score(self, row) -> int:
         """Calculate patient risk score"""
@@ -335,80 +432,76 @@ Provide your intelligent medical analysis now:"""
         return result
     
     def _get_patient_structured_data(self, query: str, patients_csv_path: str) -> List[Dict[str, Any]]:
-        """Get structured patient data with OPTIMIZED batch medical reasoning"""
+        """Get structured patient data using batch RAG so counts match the header refresh (vector-first)."""
         try:
-            # FIXED: Use enhanced patient manager instead of direct CSV loading
-            try:
-                import sys
-                import os
-                
-                # Add the root src directory to Python path
-                root_src_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'src')
-                if root_src_path not in sys.path:
-                    sys.path.append(root_src_path)
-                
-                from enhanced_patient_manager import get_enhanced_patients_for_prioritization
-                enhanced_patients = get_enhanced_patients_for_prioritization()
-                df = pd.DataFrame(enhanced_patients)
-                print(f"✅ Chatbot using ENHANCED patients: {len(df)} total (CSV + multi-format)")
-            except Exception as e:
-                print(f"⚠️ Enhanced patient loading failed in chatbot: {e}")
-                print("🔄 Falling back to CSV loading...")
-                df = pd.read_csv(patients_csv_path)
-                print(f"📄 Chatbot using CSV fallback: {len(df)} patients")
-            
+            # Vector-first patient load
+            df = self._load_patients_df()
+            print(f"✅ Chatbot using ENHANCED patients: {len(df)} total (vector/doc)")
+
+            if df is None or df.empty:
+                return []
+
             query_lower = query.lower()
-            
-            # 🎯 CORRECT MEDICAL PRIORITIZATION: Process ALL patients, then get top priority ones
-            from .prioritizer import rule_based_priority_row
-            
-            print(f"🎯 Chatbot using CORRECT medical prioritization for ALL {len(df)} patients")
-            
-            # Step 1: Process ALL patients for proper prioritization
-            all_patients_data = []
-            for _, row in df.iterrows():
-                priority_result = rule_based_priority_row(row.to_dict())
-                
-                patient_record = {
-                    'Patient ID': row['patient_id'],
-                    'Name': row['name'],
-                    'Age': row['age'],
-                    'Condition': row['condition'],
-                    'Risk Level': priority_result['priority_level'],
-                    'Risk Score': priority_result['score'],
-                    'Medical Reasons': ', '.join(priority_result['reasons']) if priority_result['reasons'] else 'Normal parameters',
-                    'Glucose': f"{row['glucose_mg_dL']} mg/dL",
-                    'BP': f"{row['bp_systolic']}/{row['bp_diastolic']}",
+
+            # Batch LLM prioritization for ALL rows (fast + consistent)
+            try:
+                try:
+                    from .prioritizer import rag_prioritize_batch, rule_based_priority_row
+                except Exception:
+                    from prioritizer import rag_prioritize_batch, rule_based_priority_row
+            except Exception:
+                rag_prioritize_batch = None
+                from prioritizer import rule_based_priority_row  # type: ignore
+
+            rows = df.to_dict(orient='records')
+            if rag_prioritize_batch is not None:
+                try:
+                    batch_results = rag_prioritize_batch(rows)
+                except Exception:
+                    batch_results = [rule_based_priority_row(r) for r in rows]
+            else:
+                batch_results = [rule_based_priority_row(r) for r in rows]
+
+            # Build patient table
+            all_patients_data: List[Dict[str, Any]] = []
+            for row, pr in zip(rows, batch_results):
+                reasons = pr.get('reasons') or []
+                source = pr.get('reasoning_source') or '🧠 LLM Medical Analysis'
+                all_patients_data.append({
+                    'Patient ID': row.get('patient_id'),
+                    'Name': row.get('name'),
+                    'Age': row.get('age'),
+                    'Condition': row.get('condition'),
+                    'Risk Level': pr.get('priority_level'),
+                    'Risk Score': pr.get('score'),
+                    'Medical Reasons': ', '.join(reasons) if isinstance(reasons, list) else str(reasons),
+                    'Glucose': f"{row.get('glucose_mg_dL', '')} mg/dL",
+                    'BP': f"{row.get('bp_systolic', '')}/{row.get('bp_diastolic', '')}",
                     'History': row.get('history', 'No history'),
-                    'Reasoning Source': "🧠 LLM Medical Analysis"  # MOVED TO LAST POSITION
-                }
-                all_patients_data.append(patient_record)
-            
-            # Step 2: SORT BY MEDICAL PRIORITY - Emergency patients first!
+                    'Reasoning Source': source
+                })
+
+            # Sort by medical priority then score
             priority_order = {'Emergency': 4, 'High': 3, 'Medium': 2, 'Low': 1}
             all_patients_data.sort(
                 key=lambda x: (
-                    priority_order.get(x['Risk Level'], 0),  # Medical priority first
-                    -x['Risk Score']  # Then by risk score (descending)
-                ), 
+                    priority_order.get(x.get('Risk Level'), 0),
+                    -int(x.get('Risk Score') or 0)
+                ),
                 reverse=True
             )
-            
-            # Step 3: Apply query filtering AFTER proper sorting
-            patients_data = []
-            for patient_record in all_patients_data:
-                # Filter based on query
-                if 'critical' in query_lower and patient_record['Risk Level'] in ['Emergency', 'High']:
-                    patients_data.append(patient_record)
-                elif 'diabetic' in query_lower and 'diabetes' in patient_record['Condition'].lower():
-                    patients_data.append(patient_record)
-                elif not any(term in query_lower for term in ['critical', 'diabetic']):
-                    patients_data.append(patient_record)
-                    
-            # Step 4: Return ALL patients AFTER proper prioritization and filtering
-            # Let the UI handle scrolling with the sidebar - show all patients!
-            return patients_data  # No limit - show all patients with proper prioritization!
-            
+
+            # Apply query filtering after sorting
+            def include(rec: Dict[str, Any]) -> bool:
+                if 'critical' in query_lower:
+                    return rec.get('Risk Level') in ['Emergency', 'High']
+                if any(w in query_lower for w in ['diabetic', 'diabetes', 'sugar']):
+                    return 'diabetes' in str(rec.get('Condition', '')).lower()
+                return True
+
+            patients_data = [rec for rec in all_patients_data if include(rec)]
+            return patients_data
+
         except Exception as e:
             logger.error(f"Patient data error: {str(e)}")
             return []
@@ -459,9 +552,7 @@ Provide your intelligent medical analysis now:"""
                     df = pd.DataFrame(enhanced_patients)
                     print(f"✅ Patient query using ENHANCED patients: {len(df)} total")
                 except Exception as e:
-                    print(f"⚠️ Enhanced patient loading failed in patient query: {e}")
-                    df = pd.read_csv(patients_csv_path)
-                    print(f"📄 Patient query using CSV fallback: {len(df)} patients")
+                    df = self._load_patients_df()
                 
                 if 'how many' in query_lower or 'count' in query_lower:
                     message = f"We have {len(df)} patients total in our system"
@@ -514,7 +605,7 @@ Provide your intelligent medical analysis now:"""
         # Patient-related queries
         elif any(word in query_lower for word in ['patient', 'critical', 'diabetes', 'sugar', 'bp', 'blood pressure', 'heart']):
             try:
-                df = pd.read_csv(patients_csv_path)
+                df = self._load_patients_df()
                 data = f"PATIENTS (Total: {len(df)}):\n"
                 
                 # Include relevant patient details
@@ -554,7 +645,7 @@ Provide your intelligent medical analysis now:"""
                 data += f"- {p.name} ({p.specialty})\n"
             
             try:
-                df = pd.read_csv(patients_csv_path)
+                df = self._load_patients_df()
                 data += f"\nPatients: {len(df)} total\n"
                 data += f"Sample conditions: {', '.join(df['condition'].unique()[:5])}\n"
             except:

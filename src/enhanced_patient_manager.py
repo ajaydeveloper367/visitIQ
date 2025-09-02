@@ -42,77 +42,60 @@ class EnhancedPatientManager:
     
     def get_all_patients(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
         """
-        Get all patients with enhanced data from multiple sources
-        
-        Data Priority:
-        1. Multi-format documents (most recent)
-        2. Cached processed data
-        3. CSV fallback data
+        Vector-first loader. Reads patients from chroma_db/metadatas.json.
+        If vector DB is missing, falls back to processing documents only.
+        CSV is not used.
         """
-        print("\n🔍 Loading patient data from multiple sources...")
-        
-        # Start with CSV data for baseline
-        csv_patients = self._load_csv_patients()
-        enhanced_patients = []
-        processed_patient_ids = set()
-        
-        # Process CSV patients first
-        for csv_patient in csv_patients:
-            patient_id = str(csv_patient['patient_id']).zfill(3)
-            processed_patient_ids.add(patient_id)
-            
-            # Check if we have enhanced data for this patient
-            if patient_id in self.patient_cache and not force_refresh:
-                # Use cached enhanced data
-                enhanced_patient = self.patient_cache[patient_id]
-                print(f"   📋 Patient {patient_id}: Using cached multi-format data")
-                
-            elif self._has_documents(patient_id):
-                # Process documents for this patient
-                print(f"   🔄 Patient {patient_id}: Processing multi-format documents...")
-                enhanced_patient = self.document_processor.process_all_patient_documents(patient_id)
-                
-                # Cache the results
-                self.patient_cache[patient_id] = enhanced_patient
-                self._save_cache()
-                
-            else:
-                # Fallback to CSV data with enhancement
-                enhanced_patient = self._enhance_csv_patient(csv_patient)
-                print(f"   📄 Patient {patient_id}: Using CSV data (no documents found)")
-            
-            # ENSURE CONSISTENT STRING PATIENT_ID FOR ALL PATIENTS
-            if isinstance(enhanced_patient, dict) and 'patient_id' in enhanced_patient:
-                enhanced_patient['patient_id'] = str(enhanced_patient['patient_id']).zfill(3)
-            
-            enhanced_patients.append(enhanced_patient)
-        
-        # ADDED: Also check for document-only patients not in CSV
+        print("\n🔍 Loading patient data (Vector-first)...")
+
+        # 1) Vector DB metadata
+        try:
+            base_app = Path(__file__).resolve().parents[1]  # .../app
+            candidates = [base_app / 'chroma_db' / 'metadatas.json', base_app.parent / 'chroma_db' / 'metadatas.json']
+            for mp in candidates:
+                if mp.exists():
+                    with open(mp, 'r', encoding='utf-8') as f:
+                        metas = json.load(f)
+                    patients_meta = [m for m in metas if m.get('type') == 'patient']
+                    if patients_meta:
+                        normalized: List[Dict[str, Any]] = []
+                        for m in patients_meta:
+                            normalized.append({
+                                'patient_id': str(m.get('patient_id', m.get('id', ''))).zfill(3),
+                                'name': m.get('name', 'Unknown Patient'),
+                                'age': int((m.get('age') or 50)),
+                                'condition': m.get('condition', 'Unknown'),
+                                'glucose_mg_dL': float(m.get('glucose_mg_dL') or 0),
+                                'bp_systolic': float(m.get('bp_systolic') or 0),
+                                'bp_diastolic': float(m.get('bp_diastolic') or 0),
+                                'heart_rate': float(m.get('heart_rate') or 0),
+                                'history': m.get('history', ''),
+                                'notes': m.get('notes', ''),
+                                'document_count': m.get('document_count', 0),
+                                'last_document_date': m.get('last_document_date'),
+                                'data_source': 'VectorDB'
+                            })
+                        print(f"✅ Loaded {len(normalized)} patients from Vector DB")
+                        return normalized
+        except Exception as e:
+            print(f"⚠️ Vector DB read failed: {e}")
+
+        # 2) Documents only (no CSV)
+        enhanced_patients: List[Dict[str, Any]] = []
         docs_dir = Path(self.documents_path)
         if docs_dir.exists():
             for patient_dir in docs_dir.iterdir():
                 if patient_dir.is_dir() and patient_dir.name.startswith('patient_'):
                     patient_id = patient_dir.name.replace('patient_', '')
-                    
-                    # Skip if already processed from CSV
-                    if patient_id not in processed_patient_ids:
-                        print(f"   🆕 Patient {patient_id}: Document-only patient (not in CSV)")
-                        
-                        if patient_id in self.patient_cache and not force_refresh:
-                            enhanced_patient = self.patient_cache[patient_id]
-                            print(f"   📋 Patient {patient_id}: Using cached document-only data")
-                        else:
-                            # Process documents for this document-only patient
-                            print(f"   🔄 Patient {patient_id}: Processing document-only patient...")
-                            enhanced_patient = self.document_processor.process_all_patient_documents(patient_id)
-                            
-                            # Cache the results
-                            self.patient_cache[patient_id] = enhanced_patient
-                            self._save_cache()
-                        
-                        enhanced_patients.append(enhanced_patient)
-        
-        print(f"✅ Loaded {len(enhanced_patients)} patients with enhanced data")
+                    if patient_id in self.patient_cache and not force_refresh:
+                        enhanced_patient = self.patient_cache[patient_id]
+                    else:
+                        enhanced_patient = self.document_processor.process_all_patient_documents(patient_id)
+                        self.patient_cache[patient_id] = enhanced_patient
+                        self._save_cache()
+                    enhanced_patients.append(enhanced_patient)
+
+        print(f"✅ Loaded {len(enhanced_patients)} patients from documents")
         return enhanced_patients
     
     def get_patient_by_id(self, patient_id: str, force_refresh: bool = False) -> Optional[Dict[str, Any]]:
@@ -128,12 +111,13 @@ class EnhancedPatientManager:
             self._save_cache()
             return enhanced_patient
         
-        # Fallback to CSV
-        csv_patients = self._load_csv_patients()
-        for patient in csv_patients:
-            if str(patient['patient_id']).zfill(3) == patient_id:
-                return self._enhance_csv_patient(patient)
-        
+        # No CSV fallback; try documents only
+        if self._has_documents(patient_id):
+            enhanced_patient = self.document_processor.process_all_patient_documents(patient_id)
+            self.patient_cache[patient_id] = enhanced_patient
+            self._save_cache()
+            return enhanced_patient
+
         return None
     
     def get_patient_documents_summary(self, patient_id: str) -> Dict[str, Any]:
@@ -230,17 +214,9 @@ class EnhancedPatientManager:
         
         return recent_patients
     
-    def _load_csv_patients(self) -> List[Dict[str, Any]]:
-        """Load patients from CSV file"""
-        try:
-            df = pd.read_csv(self.csv_path)
-            return df.to_dict('records')
-        except FileNotFoundError:
-            print(f"⚠️ CSV file not found: {self.csv_path}")
-            return []
-        except Exception as e:
-            print(f"❌ Error loading CSV: {e}")
-            return []
+    # CSV loader removed for vector-first workflow
+    def _load_csv_patients(self) -> List[Dict[str, Any]]:  # kept for compatibility, returns empty
+        return []
     
     def _enhance_csv_patient(self, csv_patient: Dict[str, Any]) -> Dict[str, Any]:
         """Enhance CSV patient data with additional metadata"""

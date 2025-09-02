@@ -85,6 +85,13 @@ class MedicalDocumentGenerator:
         print(f"🤖 LLM endpoint: {self.llm_base_url}")
         print(f"🧠 Model: {self.llm_model}")
         
+        # PDF helper availability
+        try:
+            import fitz  # PyMuPDF
+            self._pdf_available = True
+        except Exception:
+            self._pdf_available = False
+        
     def _call_llm(self, prompt: str, max_tokens: int = 500) -> str:
         """Call local Ollama LLM"""
         try:
@@ -262,14 +269,17 @@ FOLLOW-UP: {random.choice(['3 months', '6 months', '4 weeks'])}
 
 Electronically signed by Dr. {random.choice(['Smith', 'Johnson', 'Williams', 'Brown'])}"""
 
-        filename = f"{date.strftime('%Y-%m-%d')}_clinical_note.txt"
-        filepath = output_dir / "clinical_notes" / filename
-        filepath.parent.mkdir(parents=True, exist_ok=True)
+        # Write TXT
+        txt_filename = f"{date.strftime('%Y-%m-%d')}_clinical_note.txt"
+        txt_path = output_dir / "clinical_notes" / txt_filename
+        txt_path.parent.mkdir(parents=True, exist_ok=True)
+        txt_path.write_text(clinical_note, encoding="utf-8")
+
+        # Also write PDF if available
+        pdf_path = output_dir / "clinical_notes" / f"{date.strftime('%Y-%m-%d')}_clinical_note.pdf"
+        self._write_pdf_safe(clinical_note, pdf_path)
         
-        with open(filepath, 'w') as f:
-            f.write(clinical_note)
-        
-        return str(filepath)
+        return str(pdf_path if pdf_path.exists() else txt_path)
     
     def generate_lab_report(self, patient_profile: Dict, date: datetime, output_dir: Path) -> str:
         """Generate lab report text file using LLM"""
@@ -331,14 +341,17 @@ Hemoglobin A1c           {hba1c}%              [<7.0%]      {'HIGH' if hba1c > 7
 Results reviewed and approved by Dr. {random.choice(['Johnson', 'Williams', 'Brown', 'Garcia'])}, MD
 Lab Director: {random.choice(['Regional Medical Center', 'City General Hospital', 'Valley Health Labs'])}"""
 
-        filename = f"{date.strftime('%Y-%m-%d')}_lab_report.txt"
-        filepath = output_dir / "lab_reports" / filename
-        filepath.parent.mkdir(parents=True, exist_ok=True)
+        # Write TXT
+        txt_filename = f"{date.strftime('%Y-%m-%d')}_lab_report.txt"
+        txt_path = output_dir / "lab_reports" / txt_filename
+        txt_path.parent.mkdir(parents=True, exist_ok=True)
+        txt_path.write_text(lab_report, encoding="utf-8")
+
+        # Also write PDF if available
+        pdf_path = output_dir / "lab_reports" / f"{date.strftime('%Y-%m-%d')}_lab_report.pdf"
+        self._write_pdf_safe(lab_report, pdf_path)
         
-        with open(filepath, 'w') as f:
-            f.write(lab_report)
-        
-        return str(filepath)
+        return str(pdf_path if pdf_path.exists() else txt_path)
     
     def generate_prescription_record(self, patient_profile: Dict, date: datetime, output_dir: Path) -> str:
         """Generate prescription/medication record"""
@@ -468,14 +481,17 @@ Electronically signed by:
 Dr. {random.choice(['Thompson', 'Anderson', 'White', 'Harris'])}, MD
 Date: {date.strftime('%m/%d/%Y %H:%M')}"""
 
-        filename = f"{date.strftime('%Y-%m-%d')}_discharge_summary.txt"
-        filepath = output_dir / "discharge_summaries" / filename
-        filepath.parent.mkdir(parents=True, exist_ok=True)
+        # Write TXT
+        txt_filename = f"{date.strftime('%Y-%m-%d')}_discharge_summary.txt"
+        txt_path = output_dir / "discharge_summaries" / txt_filename
+        txt_path.parent.mkdir(parents=True, exist_ok=True)
+        txt_path.write_text(discharge_summary, encoding="utf-8")
+
+        # Also write PDF if available
+        pdf_path = output_dir / "discharge_summaries" / f"{date.strftime('%Y-%m-%d')}_discharge_summary.pdf"
+        self._write_pdf_safe(discharge_summary, pdf_path)
         
-        with open(filepath, 'w') as f:
-            f.write(discharge_summary)
-        
-        return str(filepath)
+        return str(pdf_path if pdf_path.exists() else txt_path)
     
     def generate_patient_documents(self, patient_id: str, num_reports: int = 5) -> Dict[str, Any]:
         """Generate all document types for a single patient"""
@@ -542,7 +558,7 @@ Date: {date.strftime('%m/%d/%Y %H:%M')}"""
         print(f"   📋 Generated {len(generated_files)} documents total")
         return summary
     
-    def generate_batch_documents(self, num_patients: int = 10, reports_per_patient: int = 5):
+    def generate_batch_documents(self, num_patients: int = 10, reports_per_patient: int = 5, start_id: int = 1):
         """Generate documents for multiple patients"""
         print(f"\n🏥 GENERATING MEDICAL DOCUMENTS FOR {num_patients} PATIENTS")
         print(f"📊 Target: {reports_per_patient} reports per patient = {num_patients * reports_per_patient} total documents")
@@ -558,8 +574,8 @@ Date: {date.strftime('%m/%d/%Y %H:%M')}"""
         all_summaries = []
         total_docs = 0
         
-        for patient_num in range(1, num_patients + 1):
-            patient_id = str(patient_num).zfill(3)
+        for patient_num in range(0, num_patients):
+            patient_id = str(start_id + patient_num).zfill(3)
             
             try:
                 summary = self.generate_patient_documents(patient_id, reports_per_patient)
@@ -595,6 +611,22 @@ Date: {date.strftime('%m/%d/%Y %H:%M')}"""
         
         return master_index
 
+    def _write_pdf_safe(self, text: str, out_path: Path):
+        """Best-effort PDF writer using PyMuPDF; no-op if unavailable."""
+        try:
+            if not self._pdf_available:
+                return
+            import fitz
+            doc = fitz.open()
+            page = doc.new_page(width=595, height=842)  # A4
+            rect = fitz.Rect(50, 50, 545, 792)
+            page.insert_textbox(rect, text, fontname="helv", fontsize=11, align=0)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            doc.save(str(out_path))
+            doc.close()
+        except Exception:
+            pass
+
 def main():
     parser = argparse.ArgumentParser(description="Generate realistic medical documents for VisitIQ testing")
     parser.add_argument("--patients", type=int, default=10, help="Number of patients to generate (default: 10)")
@@ -602,6 +634,7 @@ def main():
     parser.add_argument("--output-dir", type=str, default="data/patient_documents", help="Output directory")
     parser.add_argument("--llm-url", type=str, default="http://localhost:11434", help="LLM base URL")
     parser.add_argument("--llm-model", type=str, default="llama3", help="LLM model name")
+    parser.add_argument("--start-id", type=int, default=1, help="Starting patient ID (e.g., 151)")
     
     args = parser.parse_args()
     
@@ -619,7 +652,7 @@ def main():
         llm_model=args.llm_model
     )
     
-    generator.generate_batch_documents(args.patients, args.reports_per_patient)
+    generator.generate_batch_documents(args.patients, args.reports_per_patient, start_id=args.start_id)
 
 if __name__ == "__main__":
     main()
