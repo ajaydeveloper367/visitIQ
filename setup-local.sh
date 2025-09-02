@@ -31,7 +31,8 @@ fi
 
 # Create installation directory
 echo -e "${BLUE}📁 Creating installation directory...${NC}"
-mkdir -p "$INSTALL_DIR"/{app,data,chroma_db,logs}
+mkdir -p "$INSTALL_DIR"/{app,logs}
+mkdir -p "$INSTALL_DIR/app"/{data,chroma_db}
 
 # Check system requirements
 echo -e "${BLUE}🔍 Checking system requirements...${NC}"
@@ -83,7 +84,7 @@ cp -r "$SOURCE_DIR/tools" "$INSTALL_DIR/"
 
 # Copy vector database if exists
 if [[ -d "$SOURCE_DIR/chroma_db" ]]; then
-    cp -r "$SOURCE_DIR/chroma_db"/* "$INSTALL_DIR/chroma_db/" 2>/dev/null || true
+    cp -r "$SOURCE_DIR/chroma_db"/* "$INSTALL_DIR/app/chroma_db/" 2>/dev/null || true
 fi
 
 echo -e "${GREEN}✅ Application installed${NC}"

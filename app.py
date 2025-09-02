@@ -1169,16 +1169,34 @@ elif view == '🎯 Smart Patient Prioritization':
                         'Medical Reasons': '; '.join(patient.get('base_reasons', [])[:2]) if patient.get('base_reasons') else 'Normal parameters',
                         'Recommended Physician': recommended_physician,
                         'Department': recommended_department,
-                        'AI Method': patient.get('reasoning_source', '❓ Unknown'),
-                        'Details': json.dumps({
-                            'llm_priority': patient.get('base_priority_level'),
-                            'llm_score': patient.get('base_score'),
-                            'llm_reasons': patient.get('base_reasons', []),
-                            'llm_context': patient.get('debug_context', '')
-                        })
+                        'AI Method': patient.get('reasoning_source', '❓ Unknown')
                     })
                 
                 priority_df = pd.DataFrame(priority_data)
+                # Cache results so table persists across reruns caused by feedback edits
+                st.session_state.priority_df_records = priority_df.to_dict('records')
+
+                # Add feedback indicator column (shows if overrides/deltas are applied)
+                try:
+                    from src.feedback_store import FeedbackStore
+                    _fb = FeedbackStore()
+                    _adj = _fb.get_adjustments()
+                    labels = []
+                    for _pid in priority_df['ID'].tolist():
+                        _a = _adj.get(str(_pid))
+                        if not _a:
+                            labels.append('')
+                            continue
+                        parts = []
+                        if isinstance(_a.get('priority_override'), str) and _a.get('priority_override'):
+                            parts.append(f"Override→{_a.get('priority_override')}")
+                        if (_a.get('score_delta') or 0) != 0:
+                            sd = int(_a.get('score_delta') or 0)
+                            parts.append(f"Δ{sd:+}")
+                        labels.append('📝 ' + ' | '.join(parts) if parts else '')
+                    priority_df['Feedback'] = labels
+                except Exception:
+                    priority_df['Feedback'] = ''
                 
                 # Gentle professional color coding for priority levels
                 def highlight_priority(val):
@@ -1209,6 +1227,7 @@ elif view == '🎯 Smart Patient Prioritization':
                 # Remove background_gradient due to matplotlib dependency
                 # styled_df = styled_df.background_gradient(subset=['Final Score'], cmap='RdYlGn')
                 
+                # Feedback UI per patient (non-intrusive, appears below table)
                 st.dataframe(
                     styled_df,
                     use_container_width=True,
@@ -1222,10 +1241,71 @@ elif view == '🎯 Smart Patient Prioritization':
                         "Risk Level": st.column_config.TextColumn("Risk Level", width="small"),
                         "Risk Score": st.column_config.NumberColumn("Risk Score", width="small"),
                         "Medical Reasons": st.column_config.TextColumn("Medical Reasons", width="large"),
-                        "AI Method": st.column_config.TextColumn("AI Method", width="medium"),
-                        "Details": st.column_config.TextColumn("Details (raw LLM JSON)", help="Raw LLM output and context for transparency. Expand each cell to view.")
+                        "Feedback": st.column_config.TextColumn("Feedback", help="Clinician override / score adjustment applied"),
+                        "AI Method": st.column_config.TextColumn("AI Method", width="medium")
                     }
                 )
+
+                # Inline feedback panel directly under prioritization table
+                from src.feedback_store import FeedbackStore
+                fb_store = FeedbackStore()
+                st.subheader('✍️ Status updates / feedbacks')
+                st.caption('Provide feedback while viewing the ranking. Saved updates persist and affect future runs.')
+
+                # Persistent rows independent of table reruns
+                if 'feedback_rows_inline' not in st.session_state:
+                    st.session_state.feedback_rows_inline = [
+                        {'Patient ID': '', 'Status': 'none', 'Risk Level': '', 'RISK Score': 0, 'Comment': '', 'Submit?': False}
+                    ]
+                pid_options = sorted([str(pid) for pid in patients_df['patient_id'].astype(str).tolist()])
+                fb_df_inline = pd.DataFrame(st.session_state.feedback_rows_inline)
+                edited_inline = st.data_editor(
+                    fb_df_inline,
+                    key='inline_feedback_editor',
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        'Patient ID': st.column_config.SelectboxColumn(options=[''] + pid_options),
+                        'Status': st.column_config.SelectboxColumn(options=['none','ignore_not_available','ignore_already_visited','ignore_not_interested','ignore_appointment_done']),
+                        'Risk Level': st.column_config.SelectboxColumn(options=['','Emergency','High','Medium','Low']),
+                        'RISK Score': st.column_config.NumberColumn(step=5),
+                        'Submit?': st.column_config.CheckboxColumn()
+                    }
+                )
+                st.session_state.feedback_rows_inline = edited_inline.to_dict('records')
+                col_add_i, col_save_i, col_view = st.columns([1,2,2])
+                with col_add_i:
+                    if st.button('➕ Add row', key='add_inline_row'):
+                        st.session_state.feedback_rows_inline.append({'Patient ID': '', 'Status': 'none', 'Risk Level': '', 'RISK Score': 0, 'Comment': '', 'Submit?': False})
+                        st.rerun()
+                with col_save_i:
+                    if st.button('💾 Save selected', key='save_inline_rows'):
+                        saved_any = False
+                        for row in st.session_state.feedback_rows_inline:
+                            if row.get('Submit?') and row.get('Patient ID'):
+                                fb_store.add_feedback(
+                                    patient_id=str(row['Patient ID']),
+                                    status=row.get('Status','none'),
+                                    comment=str(row.get('Comment','')),
+                                    priority_override=(row.get('Risk Level') or None),
+                                    score_delta=int(row.get('RISK Score') or 0)
+                                )
+                                row['Submit?'] = False
+                                saved_any = True
+                        if saved_any:
+                            st.success('✅ Thank you. Your update has been saved and will apply on next run.')
+                        else:
+                            st.info('Select rows with Patient ID and check "Submit?" to save.')
+                with col_view:
+                    if st.button('📚 View saved updates', key='view_saved_inline'):
+                        latest_map = fb_store.load_latest_map()
+                        if latest_map:
+                            out_rows = []
+                            for pid, fb in latest_map.items():
+                                out_rows.append({'Patient ID': pid, 'Status': fb.status, 'Risk Level': fb.priority_override or '', 'RISK Score': fb.score_delta, 'Comment': fb.comment, 'Timestamp': fb.timestamp})
+                            st.dataframe(pd.DataFrame(out_rows).sort_values('Timestamp', ascending=False), use_container_width=True)
+                        else:
+                            st.info('No feedback saved yet.')
                 
                 # Summary statistics
                 st.subheader('📊 Prioritization Summary')
@@ -1253,6 +1333,106 @@ elif view == '🎯 Smart Patient Prioritization':
                 
             else:
                 st.warning('No patients could be prioritized. Check available slots.')
+
+    # If we have cached results from a previous run, show them persistently
+    elif st.session_state.get('priority_df_records'):
+        priority_df = pd.DataFrame(st.session_state.priority_df_records)
+        # Gentle professional color coding for priority levels
+        def highlight_priority(val):
+            if val == 'Emergency':
+                return 'background-color: #ffebee; color: #d32f2f; font-weight: 600; border-left: 4px solid #d32f2f;'
+            elif val == 'High':
+                return 'background-color: #fff3e0; color: #f57c00; font-weight: 600; border-left: 4px solid #f57c00;'
+            elif val == 'Medium':
+                return 'background-color: #f3f4f6; color: #6b7280; font-weight: 500; border-left: 4px solid #6b7280;'
+            else:
+                return 'background-color: #f0f9f0; color: #2e7d32; font-weight: 500; border-left: 4px solid #2e7d32;'
+
+        display_df = priority_df.copy()
+        for col in ['Rank', 'Priority Rank']:
+            if col in display_df.columns:
+                display_df = display_df.drop(columns=[col])
+        display_df.index = display_df.index + 1
+        display_df.index.name = 'Priority Rank'
+        styled_df = display_df.style.applymap(highlight_priority, subset=['Risk Level'])
+        st.dataframe(
+            styled_df,
+            use_container_width=True,
+            column_config={
+                "ID": st.column_config.TextColumn("ID", width="small"),
+                "Name": st.column_config.TextColumn("Name", width="medium"),
+                "Age": st.column_config.NumberColumn("Age", width="small"),
+                "Condition": st.column_config.TextColumn("Condition", width="medium"),
+                "Recommended Physician": st.column_config.TextColumn("👨‍⚕️ Recommended Physician", width="medium"),
+                "Department": st.column_config.TextColumn("🏥 Department", width="medium"),
+                "Risk Level": st.column_config.TextColumn("Risk Level", width="small"),
+                "Risk Score": st.column_config.NumberColumn("Risk Score", width="small"),
+                "Medical Reasons": st.column_config.TextColumn("Medical Reasons", width="large"),
+                "Feedback": st.column_config.TextColumn("Feedback", help="Clinician override / score adjustment applied"),
+                "AI Method": st.column_config.TextColumn("AI Method", width="medium")
+            }
+        )
+
+        # Inline feedback panel (same as in live run)
+        from src.feedback_store import FeedbackStore
+        fb_store = FeedbackStore()
+        st.subheader('✍️ Status updates / feedbacks')
+        st.caption('Provide feedback while viewing the ranking. Saved updates persist and affect future runs.')
+        if 'feedback_rows_inline' not in st.session_state:
+            st.session_state.feedback_rows_inline = [
+                {'Patient ID': '', 'Status': 'none', 'Risk Level': '', 'RISK Score': 0, 'Comment': '', 'Submit?': False}
+            ]
+        pid_options = sorted([str(pid) for pid in patients_df['patient_id'].astype(str).tolist()])
+        fb_df_inline = pd.DataFrame(st.session_state.feedback_rows_inline)
+        edited_inline = st.data_editor(
+            fb_df_inline,
+            key='inline_feedback_editor_cached',
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                'Patient ID': st.column_config.SelectboxColumn(options=[''] + pid_options),
+                'Status': st.column_config.SelectboxColumn(options=['none','ignore_not_available','ignore_already_visited','ignore_not_interested','ignore_appointment_done']),
+                'Risk Level': st.column_config.SelectboxColumn(options=['','Emergency','High','Medium','Low']),
+                'RISK Score': st.column_config.NumberColumn(step=5),
+                'Submit?': st.column_config.CheckboxColumn()
+            }
+        )
+        st.session_state.feedback_rows_inline = edited_inline.to_dict('records')
+        col_add_i, col_save_i, col_view = st.columns([1,2,2])
+        with col_add_i:
+            if st.button('➕ Add row', key='add_inline_row_cached'):
+                st.session_state.feedback_rows_inline.append({'Patient ID': '', 'Status': 'none', 'Risk Level': '', 'RISK Score': 0, 'Comment': '', 'Submit?': False})
+                st.rerun()
+        with col_save_i:
+            if st.button('💾 Save selected', key='save_inline_rows_cached'):
+                saved_any = False
+                for row in st.session_state.feedback_rows_inline:
+                    if row.get('Submit?') and row.get('Patient ID'):
+                        fb_store.add_feedback(
+                            patient_id=str(row['Patient ID']),
+                            status=row.get('Status','none'),
+                            comment=str(row.get('Comment','')),
+                            priority_override=(row.get('Risk Level') or None),
+                            score_delta=int(row.get('RISK Score') or 0)
+                        )
+                        row['Submit?'] = False
+                        saved_any = True
+                if saved_any:
+                    st.success('✅ Thank you. Your update has been saved and will apply on next run.')
+                else:
+                    st.info('Select rows with Patient ID and check "Submit?" to save.')
+        with col_view:
+            if st.button('📚 View saved updates', key='view_saved_inline_cached'):
+                latest_map = fb_store.load_latest_map()
+                if latest_map:
+                    out_rows = []
+                    for pid, fb in latest_map.items():
+                        out_rows.append({'Patient ID': pid, 'Status': fb.status, 'Risk Level': fb.priority_override or '', 'RISK Score': fb.score_delta, 'Comment': fb.comment, 'Timestamp': fb.timestamp})
+                    st.dataframe(pd.DataFrame(out_rows).sort_values('Timestamp', ascending=False), use_container_width=True)
+                else:
+                    st.info('No feedback saved yet.')
+
+    # (Feedback moved to dedicated tab '📝 Patient Feedback')
 
 # ============ APPOINTMENT BOOKING ============
 elif view == '📋 Appointment Booking':
@@ -1426,6 +1606,90 @@ elif view == '📊 Analytics & Reports':
     if not practitioner_df.empty:
         # Remove background_gradient due to matplotlib dependency
         st.dataframe(practitioner_df, use_container_width=True)
+
+# ============ PATIENT FEEDBACK (Dedicated) ============
+elif view == '📝 Patient Feedback':
+    st.header('📝 Patient Feedback')
+    st.caption('Store and review clinician feedback. This persists until data is cleaned up.')
+
+    from src.feedback_store import FeedbackStore
+    fb_store = FeedbackStore()
+
+    # Maintain persistent rows
+    if 'feedback_rows' not in st.session_state:
+        st.session_state.feedback_rows = [
+            {
+                'Patient ID': '',
+                'Status': 'none',
+                'Priority Override': '',
+                'Score Δ': 0,
+                'Comment': '',
+                'Submit?': False,
+            }
+        ]
+
+    pid_options = sorted([str(pid) for pid in patients_df['patient_id'].astype(str).tolist()])
+
+    st.subheader('✍️ Provide Feedback')
+    fb_df = pd.DataFrame(st.session_state.feedback_rows)
+    edited_fb = st.data_editor(
+        fb_df,
+        key='patient_feedback_editor',
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            'Patient ID': st.column_config.SelectboxColumn(options=[''] + pid_options),
+            'Status': st.column_config.SelectboxColumn(options=['none','ignore_not_available','ignore_already_visited','ignore_not_interested','ignore_appointment_done']),
+            'Priority Override': st.column_config.SelectboxColumn(options=['','Emergency','High','Medium','Low']),
+            'Score Δ': st.column_config.NumberColumn(step=5),
+            'Submit?': st.column_config.CheckboxColumn()
+        }
+    )
+    st.session_state.feedback_rows = edited_fb.to_dict('records')
+
+    col_add, col_save = st.columns([1,2])
+    with col_add:
+        if st.button('➕ Add feedback row'):
+            st.session_state.feedback_rows.append({
+                'Patient ID': '', 'Status': 'none', 'Priority Override': '', 'Score Δ': 0, 'Comment': '', 'Submit?': False
+            })
+            st.rerun()
+    with col_save:
+        if st.button('💾 Save selected feedback'):
+            saved_any = False
+            for row in st.session_state.feedback_rows:
+                if row.get('Submit?') and row.get('Patient ID'):
+                    fb_store.add_feedback(
+                        patient_id=str(row['Patient ID']),
+                        status=row.get('Status','none'),
+                        comment=str(row.get('Comment','')),
+                        priority_override=(row.get('Priority Override') or None),
+                        score_delta=int(row.get('Score Δ') or 0)
+                    )
+                    row['Submit?'] = False
+                    saved_any = True
+            if saved_any:
+                st.success('✅ Thank you. Your feedback has been saved and will be applied on the next run.')
+            else:
+                st.info('Select rows with Patient ID and check "Submit?" to save.')
+
+    st.subheader('📚 Saved Feedback (Read-only)')
+    # Show latest per-patient feedback statically
+    latest_map = fb_store.load_latest_map()
+    if latest_map:
+        out_rows = []
+        for pid, fb in latest_map.items():
+            out_rows.append({
+                'Patient ID': pid,
+                'Status': fb.status,
+                'Priority Override': fb.priority_override or '',
+                'Score Δ': fb.score_delta,
+                'Comment': fb.comment,
+                'Timestamp': fb.timestamp
+            })
+        st.dataframe(pd.DataFrame(out_rows).sort_values('Timestamp', ascending=False), use_container_width=True)
+    else:
+        st.info('No feedback saved yet.')
 
 # Push branding further down with more space
 st.markdown("<br><br>", unsafe_allow_html=True)

@@ -34,7 +34,7 @@ start_service() {
     source venv/bin/activate
     
     export PYTHONPATH="$INSTALL_DIR/app:$PYTHONPATH"
-    export CHROMA_DIR="$INSTALL_DIR/chroma_db"
+    export CHROMA_DIR="$INSTALL_DIR/app/chroma_db"
     export OLLAMA_URL="http://localhost:11434"
     
     # Start Ollama if not running
@@ -142,12 +142,24 @@ status_service() {
         echo -e "${YELLOW}⚠️  Ollama service: Not running${NC}"
     fi
     
-    # Check data
-    if [[ -f "$INSTALL_DIR/data/patients.csv" ]]; then
-        PATIENTS=$(tail -n +2 "$INSTALL_DIR/data/patients.csv" | wc -l | tr -d ' ')
-        echo -e "${GREEN}✅ Healthcare data: $PATIENTS patients loaded${NC}"
+    # Check vector-first data
+    META_JSON="$INSTALL_DIR/app/chroma_db/metadatas.json"
+    if [[ -f "$META_JSON" ]]; then
+        COUNT=$(python - <<'PY'
+import json,sys
+try:
+    m=json.load(open(sys.argv[1]))
+    patients=sum(1 for x in m if x.get('type') in ('patient','patient_doc'))
+    physicians=sum(1 for x in m if x.get('type')=='physician')
+    slots=sum(1 for x in m if x.get('type')=='slot')
+    print(f"Patients: {patients}, Physicians: {physicians}, Slots: {slots}")
+except Exception:
+    print("Vector DB present; counts unavailable")
+PY
+"$META_JSON")
+        echo -e "${GREEN}✅ Vector DB: $COUNT${NC}"
     else
-        echo -e "${RED}❌ Healthcare data: Missing (run: ./visitiq generate-data)${NC}"
+        echo -e "${YELLOW}⚠️  Vector DB: Missing (run embeddings)${NC}"
     fi
     
     # Check disk usage
@@ -172,6 +184,43 @@ generate_data() {
     python tools/generate_data.py --data-dir data "$@"
     echo -e "${GREEN}✅ Data generation complete!${NC}"
     echo -e "${BLUE}🚀 Ready to start: ./visitiq start${NC}"
+}
+
+embed_data() {
+    # Usage: ./visitiq embedding {json|pdf|docs} [llm]
+    KIND="${1:-docs}"
+    USE_LLM=false
+    if [[ "${2:-}" == "llm" ]]; then
+        USE_LLM=true
+    fi
+
+    echo -e "${BLUE}🧠 Building embeddings (${KIND})...${NC}"
+    cd "$INSTALL_DIR"
+    source venv/bin/activate
+
+    DATA_DIR="$INSTALL_DIR/app/data"
+    PERSIST_DIR="$INSTALL_DIR/app/chroma_db"
+
+    ARGS=("$INSTALL_DIR/tools/build_embeddings.py" --data-dir "$DATA_DIR" --persist "$PERSIST_DIR" --ingest-docs)
+    # docs-only keeps to document ingestion; leave off if KIND==json to capture standalone JSON files
+    if [[ "$KIND" != "json" ]]; then
+        ARGS+=(--docs-only)
+    fi
+    if $USE_LLM; then
+        ARGS+=(--normalize-with-llm)
+    fi
+
+    echo "Data dir: $DATA_DIR"
+    echo "Persist:  $PERSIST_DIR"
+    echo "LLM norm: $USE_LLM"
+    # Ensure Python can import our modules
+    export PYTHONPATH="$INSTALL_DIR/app:$INSTALL_DIR/app/src:$PYTHONPATH"
+    if python "${ARGS[@]}"; then
+        echo -e "${GREEN}✅ Embeddings build completed${NC}"
+    else
+        echo -e "${RED}❌ Embeddings build failed${NC}"
+        return 1
+    fi
 }
 
 uninstall_service() {
@@ -231,6 +280,10 @@ case "${1:-}" in
         shift
         generate_data "$@"
         ;;
+    embedding|embeddings|embed|embding)
+        shift
+        embed_data "$@"
+        ;;
     uninstall)
         uninstall_service
         ;;
@@ -248,11 +301,13 @@ case "${1:-}" in
         echo "  logs          Show application logs (last 50 lines)"
         echo "  generate-data Generate sample healthcare data"
         echo "  uninstall     Remove VisitIQ completely"
+        echo "  embedding     Build embeddings (usage: ./visitiq embedding {json|pdf|docs} [llm])"
         echo
         echo -e "${BLUE}Examples:${NC}"
         echo "  ./visitiq start"
         echo "  ./visitiq status"
         echo "  ./visitiq generate-data --patients 100 --physicians 15"
+        echo "  ./visitiq embedding json llm"
         echo "  ./visitiq logs"
         echo
         echo -e "${BLUE}🌐 Web Interface:${NC} http://localhost:8501"

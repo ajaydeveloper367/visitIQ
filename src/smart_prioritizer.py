@@ -9,6 +9,7 @@ from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
 
 from .prioritizer import rag_prioritize_row, rule_based_priority_row, rag_prioritize_batch
+from .feedback_store import FeedbackStore
 from .slot_manager import get_slot_manager, SlotManager, FHIRSlot, FHIRPractitioner
 from .fhir_models import SlotStatus
 from .config import OLLAMA_URL, OLLAMA_MODEL
@@ -20,6 +21,7 @@ class SmartPrioritizer:
     
     def __init__(self, slot_manager: Optional[SlotManager] = None):
         self.slot_manager = slot_manager or get_slot_manager()
+        self.feedback_store = FeedbackStore()
         
         # Priority weights for slot matching
         self.priority_weights = {
@@ -65,6 +67,14 @@ class SmartPrioritizer:
         if practitioner_id:
             practitioner = self.slot_manager.get_practitioner(practitioner_id)
         
+        # Apply clinician feedback: ignore statuses
+        try:
+            ignored_ids = set(self.feedback_store.get_ignored_patient_ids())
+            if ignored_ids:
+                patients = [p for p in patients if str(p.get('patient_id')) not in ignored_ids]
+        except Exception:
+            pass
+
         # 🚀 OPTIMIZED: Batch process all patients for 5-10x performance improvement
         
         # LLM-FIRST medical prioritization with FAST batch processing!
@@ -121,6 +131,14 @@ class SmartPrioritizer:
                     merged_reasons.append(str(patient['medical_reasons']))
             # de-duplicate
             seen=set(); merged_reasons=[r for r in (x.strip() for x in merged_reasons) if r and (r.lower() not in seen and not seen.add(r.lower()))]
+            # Apply per-patient adjustments from feedback (priority override / score delta)
+            try:
+                adjustments = self.feedback_store.get_adjustments()
+                adj = adjustments.get(str(patient.get('patient_id')))
+            except Exception:
+                adj = None
+
+            # Compute base fields first
             enhanced_patient = {
                 **patient,
                 'base_priority_level': base_level,
@@ -132,6 +150,19 @@ class SmartPrioritizer:
                 'final_score': 0,
                 'recommended_for_booking': False
             }
+
+            # Apply feedback adjustments without altering original metadata
+            if adj:
+                # Priority override influences base level for ranking
+                if isinstance(adj.get('priority_override'), str) and adj.get('priority_override'):
+                    enhanced_patient['base_priority_level'] = adj['priority_override']
+                    enhanced_patient['base_reasons'] = ['Clinician override'] + enhanced_patient['base_reasons']
+                # Score delta adjusts slot-aware score later
+                enhanced_patient['base_score'] = float(enhanced_patient['base_score']) + float(adj.get('score_delta') or 0)
+                # Append feedback to medical reasons for transparency
+                fb_note = adj.get('comment')
+                if fb_note:
+                    enhanced_patient['base_reasons'] = enhanced_patient['base_reasons'] + [f"Feedback: {fb_note}"]
             
             # Calculate slot-aware score
             base_weight = self.priority_weights.get(enhanced_patient['base_priority_level'], 25)
