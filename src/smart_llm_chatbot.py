@@ -66,26 +66,67 @@ class SmartLLMHealthcareChatbot:
                         metas = json.load(f)
                     patients_meta = [m for m in metas if m.get('type') in ('patient','patient_doc')]
                     if patients_meta:
-                        normalized = []
+                        def sev(level: str) -> int:
+                            order = {'Emergency': 4, 'High': 3, 'Medium': 2, 'Low': 1}
+                            return order.get(str(level), 0)
+                        by_id = {}
                         for m in patients_meta:
                             pid = str(m.get('patient_id', m.get('id', '')))
+                            if not pid:
+                                continue
                             pid_norm = pid if m.get('type') == 'patient_doc' else pid.zfill(3)
-                            normalized.append({
+                            rec = by_id.get(pid_norm) or {
                                 'patient_id': pid_norm,
-                                'name': m.get('name', 'Unknown Patient'),
-                                'age': int((m.get('age') or 50)),
-                                'condition': m.get('condition', 'Unknown'),
-                                'glucose_mg_dL': float(m.get('glucose_mg_dL') or 0),
-                                'bp_systolic': float(m.get('bp_systolic') or 0),
-                                'bp_diastolic': float(m.get('bp_diastolic') or 0),
-                                'heart_rate': float(m.get('heart_rate') or 0),
-                                'history': m.get('history', ''),
-                                'notes': m.get('notes', ''),
-                                # Include enriched triage fields when present in metadatas.json
-                                'risk_level': m.get('risk_level'),
-                                'risk_score': m.get('risk_score'),
-                                'medical_reasons': m.get('medical_reasons')
-                            })
+                                'name': '', 'age': None, 'condition': '',
+                                'glucose_mg_dL': 0.0, 'bp_systolic': 0.0, 'bp_diastolic': 0.0, 'heart_rate': 0.0,
+                                'history': '', 'notes': '',
+                                'risk_level': None, 'risk_score': None, 'medical_reasons': []
+                            }
+                            if m.get('name') and not rec['name']:
+                                rec['name'] = m.get('name')
+                            if m.get('age') is not None:
+                                try: rec['age'] = int(m.get('age'))
+                                except Exception: pass
+                            if m.get('condition') and not rec['condition']:
+                                rec['condition'] = m.get('condition')
+                            for k in ('glucose_mg_dL','bp_systolic','bp_diastolic','heart_rate'):
+                                try:
+                                    v = float(m.get(k) or 0)
+                                    rec[k] = max(rec[k] or 0, v)
+                                except Exception:
+                                    pass
+                            if m.get('history') and not rec['history']:
+                                rec['history'] = m.get('history')
+                            if m.get('notes') and not rec['notes']:
+                                rec['notes'] = m.get('notes')
+                            rl = m.get('risk_level')
+                            if rl and (rec['risk_level'] is None or sev(rl) > sev(rec['risk_level'])):
+                                rec['risk_level'] = rl
+                            try:
+                                rs = m.get('risk_score')
+                                if rs is not None:
+                                    rec['risk_score'] = max((rec['risk_score'] or 0), float(rs))
+                            except Exception:
+                                pass
+                            mr = m.get('medical_reasons')
+                            if mr:
+                                if isinstance(mr, str): mr_list = [mr]
+                                else: mr_list = [str(x) for x in mr]
+                                seen = {x.strip().lower() for x in rec['medical_reasons']}
+                                for r in mr_list:
+                                    k = r.strip().lower()
+                                    if k and k not in seen:
+                                        rec['medical_reasons'].append(r.strip())
+                                        seen.add(k)
+                            by_id[pid_norm] = rec
+                        normalized = []
+                        for rec in by_id.values():
+                            rec['name'] = rec['name'] or f"Patient {rec['patient_id']}"
+                            rec['age'] = int(rec['age'] or 50)
+                            if not rec['risk_level'] and rec['risk_score'] is not None:
+                                s = float(rec['risk_score'] or 0)
+                                rec['risk_level'] = 'Emergency' if s >= 90 else ('High' if s >= 70 else ('Medium' if s >= 40 else 'Low'))
+                            normalized.append(rec)
                         return pd.DataFrame(normalized)
         except Exception:
             pass
