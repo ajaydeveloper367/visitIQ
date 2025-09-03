@@ -343,14 +343,16 @@ This section provides comprehensive visual representations of how data flows thr
 ```mermaid
 flowchart TD
     subgraph "Input Data Sources"
+        PatientDocs["📚 Patient Documents<br/>PDF / JSON / TXT / CSV / Images"]
         PatientsCSV["📄 patients.csv<br/>Patient Records"]
-        PartnersCSV["📄 partners.csv<br/>Healthcare Providers"]
+        PractitionerJSON["🧾 Practitioners (FHIR JSON)<br/>practitioners.json"]
         UserInput["👤 User Input<br/>Web Interface"]
     end
 
     subgraph "Core Data Processing"
-        DataLoader["🔄 Data Loader<br/>CSV → Dict conversion"]
-        VectorStore["🧠 Vector Database<br/>Patient Embeddings"]
+        DocIngestor["🧩 Document Ingestor<br/>tools/build_embeddings.py"]
+        DataLoader["🔄 CSV Loader<br/>CSV → Dict conversion"]
+        VectorStore["🧠 Vector Database<br/>Embeddings (Chroma)"]
         FHIRModels["📋 FHIR Models<br/>Standards Compliance"]
     end
 
@@ -387,8 +389,13 @@ flowchart TD
     PartnersCSV --> DataLoader
     UserInput --> StreamlitApp
     
+    PatientDocs --> DocIngestor
+    PatientsCSV --> DataLoader
+    PractitionerJSON --> FHIRModels
+
+    DocIngestor --> VectorStore
     DataLoader --> VectorStore
-    DataLoader --> FHIRModels
+    FHIRModels --> VectorStore
     
     VectorStore --> SentenceTransformer
     SentenceTransformer --> Embeddings
@@ -1037,9 +1044,15 @@ POST /api/appointments           # Book appointment
    ```
 
 2. **Vector Database Not Found**
-   ```python
-   # Rebuild embeddings
-   build_vectorstore_from_csv("data/patients.csv")
+   ```bash
+   # Initialize empty store then ingest patient documents
+   ~/.visitiq/venv/bin/python ~/.visitiq/app/tools/build_embeddings.py \
+     --data-dir ~/.visitiq/app/data --persist ~/.visitiq/app/chroma_db \
+     --docs-only
+
+   ~/.visitiq/venv/bin/python ~/.visitiq/app/tools/build_embeddings.py \
+     --data-dir ~/.visitiq/app/data --persist ~/.visitiq/app/chroma_db \
+     --ingest-docs --normalize-with-llm
    ```
 
 3. **Streamlit Performance Issues**
